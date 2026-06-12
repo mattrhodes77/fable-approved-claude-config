@@ -31,7 +31,7 @@ hooks/check-freeze.sh            # guardrail: hard-block edits outside a declare
 
 [`skills/brainstorming/SKILL.md`](skills/brainstorming/SKILL.md) governs how work *enters* a session. It runs before any creative work: explore context, clarify intent one question at a time, propose 2–3 approaches with trade-offs, present a design, and **get approval before a single line of code** — with a hard gate against "this is too simple to need a design" (simple projects are exactly where unexamined assumptions burn the most work). Designs that go through this gate arrive at PRlaunch with their scope already agreed, which is most of why the review gates come back clean.
 
-Vendored verbatim from Jesse Vincent's [superpowers](https://github.com/obra/superpowers) plugin (MIT, license included alongside). If you want the whole methodology suite — TDD, systematic debugging, plan writing/execution — install the full plugin; this copy is for people who want the single highest-leverage skill without adopting the rest.
+Vendored verbatim from Jesse Vincent's [superpowers](https://github.com/obra/superpowers) plugin (MIT, license included alongside). To be clear: **we run the full plugin, daily** — brainstorming hands off to its `writing-plans` / `executing-plans` skills, and every repo we work in has a `docs/superpowers/` directory of dated specs and plans to show for it; its `using-git-worktrees` discipline is why our worktree-per-ticket pattern exists, and its skill-dispatch rules are injected into every session at start. We vendor only brainstorming here because it's the one stage this repo's story needs inline — the rest of the suite is one plugin install away and better consumed from the source than forked.
 
 ## 2. Build — mf-frontend-design
 
@@ -185,7 +185,7 @@ Two projects shaped this config enough to deserve more than a credit line. Both 
 
 **Where we differ:** gstack builds its own infrastructure for nearly everything — custom browser, custom memory, custom state directories, custom analytics. We stay harness-native: plain markdown commands and skills in `~/.claude`, standard hooks in `settings.json`, MCP for memory, the stock browser tooling. That keeps every piece independently adoptable (you can take one file from this repo and use it today) and means there's no parallel ecosystem to maintain or upgrade. If you want the integrated-factory experience, gstack is the best version of it; if you want composable pieces on the stock harness, that's this repo.
 
-(A third influence, Jesse Vincent's [superpowers](https://github.com/obra/superpowers), is covered in section 1 — same philosophy applies: we vendored the single highest-leverage skill rather than adopting the whole suite, and we link the suite for those who want it.)
+(A third influence, Jesse Vincent's [superpowers](https://github.com/obra/superpowers), is different in kind: it's not just an influence — we run the full plugin in production alongside this config. Brainstorm → write plan → execute plan is the superpowers loop; this repo picks up where that loop ends, at shipping. We vendor only the brainstorming skill here and point you at the plugin for the rest, because actively-maintained upstream beats a fork.)
 
 ## Credits
 
