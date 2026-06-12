@@ -1,0 +1,145 @@
+---
+description: Wrap up the session — sync tracker, sync GitHub, clean dirty branches, persist memory, report
+---
+
+# Session Wrapup
+
+End-of-session checklist. Work through each step in order, then deliver one consolidated report at the end. Do NOT skip steps. If a step has nothing to do, say so explicitly in the report ("Tracker: nothing to update").
+
+Use TodoWrite to track the 6 steps. Mark each done as you go.
+
+---
+
+## 1. Tracker tickets
+
+Goal: every ticket touched this session reflects current reality.
+
+- Identify tickets referenced or worked on this session (scan conversation for ticket IDs, branch names, PR titles, commits).
+- For each ticket: check current state. Compare against what actually happened.
+- Update state when reality has moved past the ticket:
+  - Code shipped to main → "Deployed"
+  - PR open and ready → "In Review"
+  - Work paused mid-stream → leave a comment with current state + next step
+  - Scope changed → update description or add comment
+- Add a comment summarizing this session's progress on the ticket if not obvious from PR links.
+- If you're unsure whether a state change is warranted, ask the owner before flipping it.
+- **Follow-up work surfaced this session → file a ticket, don't just note it.** Out-of-scope review findings, deferred fixes, known gaps, "we should also…" items — if it's legitimate and won't ship this session, create an issue (batch related ones; link the source PR + `file:line` where relevant). The "Open follow-ups" report section is a summary of filed tickets, not a substitute for filing them. Out-of-scope ≠ discard.
+
+## 2. GitHub
+
+Goal: every PR opened/touched this session is in the right state and visible.
+
+- `gh pr list --author "@me" --state open` — quick scan of your open PRs.
+- For PRs touched this session:
+  - Draft that's actually ready? → flip to ready (`gh pr ready <num>`).
+  - Description stale vs. final commits? → update body.
+  - Automated-reviewer findings open? → don't auto-fix unless trivially safe, but every legit finding gets a disposition: in-scope+trivial → fix; in-scope non-trivial or out-of-scope (many reviewers scan the whole repo, not just your diff) → **file a ticket**; junk → waive-with-reason in the report. Noting it in the report is not a disposition on its own.
+  - Stacked PR with base merged? → rebase or note for follow-up.
+- Respect your team's merge policy (in our shop: the agent never merges).
+
+## 3. Stale / dirty branches
+
+Goal: no uncommitted work, no unpushed commits, no branches without PRs that should have them.
+
+For each repo touched this session:
+
+```bash
+cd <repo>
+git status --short              # uncommitted changes?
+git log @{u}..HEAD --oneline    # unpushed commits? (skip if no upstream)
+git branch --show-current       # branch name
+gh pr view --json number 2>/dev/null  # has a PR?
+```
+
+Decision tree per branch:
+
+| State | Action |
+|-------|--------|
+| Clean, pushed, has PR | nothing to do |
+| Uncommitted changes | show `git diff --stat` to the owner, ask: commit + push, stash, or discard? |
+| Committed but unpushed | ask: push to existing PR / open new PR / leave for later? |
+| Pushed but no PR, and changes look ship-worthy | ask: open PR or leave as work-in-progress branch? |
+| Worktree with no changes | safe to leave; mention in report |
+
+**Always confirm with the owner before pushing, opening a PR, or discarding work.** Reading state is free; mutating it needs a green light.
+
+## 4. Memory
+
+Goal: capture anything from this session that a future session needs to know and can't easily re-derive from code or git.
+
+Review the session for memory candidates. Strong candidates:
+
+- New feedback the owner gave (corrections AND validated approaches)
+- Project state that's not in git (decisions, blockers, who-owns-what, dated deadlines)
+- External references the owner named (dashboards, tracker projects, docs)
+- Surprising gotchas / footguns surfaced this session
+- User-context shifts (new role, new project focus, new collaborator)
+
+For each candidate:
+- Check for an existing entry to UPDATE rather than duplicate.
+- If updating an existing memory because facts changed, also update its description/index line.
+
+Skip: code patterns, file paths, architectural facts derivable by reading the repo, ephemeral task state.
+
+If nothing is worth saving, say so — don't invent entries to look productive.
+
+(This works with Claude Code's native auto-memory. We run a retrieval-backed memory system instead — see the README's memory section — but the discipline is identical: dedupe before writing, update over duplicate, skip the derivable.)
+
+## 5. Config repo
+
+Goal: your `~/.claude` customizations stay tracked.
+
+We keep `~/.claude` itself as a **private** git repo with an ignore-everything `.gitignore` that whitelists only deliberate config: `CLAUDE.md`, `settings.json`, `commands/`, `skills/`, `hooks/*.sh`, playbooks. Never tracked: credentials, tokens, `.env`, MCP definitions with secrets, session data.
+
+```bash
+cd ~/.claude
+git status --short
+```
+
+- Dirty? Review the diff briefly (sanity-check no secrets — tokens, API keys, account emails in new files), then commit with a one-line message describing the config change and push.
+- New customization files created this session (new command/skill/playbook/script)? Check they're covered by the `.gitignore` whitelist; extend it if not.
+- Clean? Say so in the report.
+
+(Skip this step if you don't track your config in git — though you should.)
+
+## 6. Report
+
+One consolidated message. Structure:
+
+```
+## Wrapup complete
+
+**Tracker**
+- XXX-111 → moved In Progress → In Review (PR #123)
+- XXX-222 → comment added: blocked on team merge
+- (or: nothing to update)
+
+**GitHub**
+- PR #123 flipped draft → ready
+- PR #456 has 2 open reviewer findings — left for next session
+- (or: nothing to update)
+
+**Branches**
+- repo-a/feat/foo — clean, pushed, PR #123
+- repo-b/main — clean
+- (any branches needing follow-up that the owner confirmed leaving)
+
+**Memory**
+- Saved: <slug> — <one-line why>
+- Updated: <slug> — <what changed>
+- (or: nothing new worth saving)
+
+**Config repo**
+- committed: <one-line summary> (or: clean)
+
+**Tickets filed for follow-ups / out-of-scope findings**
+- XXX-333 — <what> (out-of-scope reviewer finding from #123)
+- waived: <finding> — <reason>
+- (or: none)
+
+**Open follow-ups for next session**
+- <thing #1>
+- <thing #2>
+```
+
+Keep it scannable. No filler. If everything was already clean, the report can be 3 lines.

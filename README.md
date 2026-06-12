@@ -25,7 +25,10 @@ Gate 3 is the one most teams don't have. The failure it targets isn't *not testi
 ```
 commands/PRlaunch.md             # the pipeline — 7 phases, gate order, disposition rules, guardrails
 commands/deep-review.md          # Deep Review Process v6.8 — the full review methodology gate 1 runs
+commands/wrapup.md               # session-end checklist: tracker sync, GitHub sync, branch hygiene, memory, report
 hooks/pr-gate.sh                 # PreToolUse hook that blocks `gh pr create` without a valid gate marker
+hooks/check-careful.sh           # PreToolUse hook: confirmation prompt on destructive bash commands
+hooks/check-freeze.sh            # PreToolUse hook: hard-block edits outside a declared directory boundary
 skills/mf-frontend-design/       # bonus: the frontend-design skill that feeds gate 3's visual pass
 ```
 
@@ -40,6 +43,28 @@ A 10-step review process with empirical validation at its core — *evidence ove
 - **The code-judo question** (v6.8, adapted from Cursor's [thermo-nuclear-code-quality-review](https://github.com/cursor/plugins/blob/main/cursor-team-kit/skills/thermo-nuclear-code-quality-review/SKILL.md) skill): one explicit pass per review asking whether a reframing would *delete* complexity rather than rearrange it
 - **Empirical validation**: run the app, curl the endpoints, drive the UI, prove security fixes with before/after against a running instance
 
+### Wrapup
+
+[`commands/wrapup.md`](commands/wrapup.md) is the session-end discipline PRlaunch's phase 6 runs, usable standalone as `/wrapup`: sync every touched ticket to reality, put every PR in the right state, leave zero dirty/unpushed branches, persist what future sessions need to know, commit your config repo, and report it all in one scannable message. The core rule is the same as PRlaunch's: **every finding and follow-up gets a disposition** — filed, fixed, or waived with a reason — never silently dropped.
+
+### Safety hooks
+
+Two deterministic guardrails adapted from [garrytan/gstack](https://github.com/garrytan/gstack) (with a JSON-extraction bugfix — the originals' grep-based parsing missed commands containing escaped quotes, e.g. `psql -c "DROP TABLE …"` — and output modernized to the current `hookSpecificOutput` hook schema):
+
+- **`check-careful.sh`** — forces a confirmation prompt on destructive bash: `rm -rf`, SQL `DROP`/`TRUNCATE`, `git push --force`, `git reset --hard`, `git checkout/restore .`, `kubectl delete`, `docker rm -f`/`system prune`. Build-artifact deletes (`node_modules`, `.next`, `dist`, `__pycache__`, …) pass silently. Especially worth having if you run autonomous loops.
+- **`check-freeze.sh`** — dormant until you write a directory path to `~/.claude/hooks/freeze-dir.txt`, then **hard-blocks** any Edit/Write outside that boundary. It turns "stay in this repo" from an instruction the agent must remember into a rule the harness enforces. `rm ~/.claude/hooks/freeze-dir.txt` to unfreeze.
+
+### How we do memory
+
+Not shippable in this repo (it's wired to our internal platform), but worth describing because it changes what an agent can do across sessions. We replaced Claude Code's native file-based memory (which truncates: first ~200 lines / 25 KB of `MEMORY.md`) with **retrieval-backed memory served over MCP**:
+
+- An **MCP server** exposes two tools — `memory_search` and `memory_write` — backed by a memory service with namespaces for prescriptive rules vs. facts.
+- A **UserPromptSubmit hook** runs a relevance query against the store on every prompt and injects the top-ranked memories into context — so the right gotchas, decisions, and runbooks surface *for the task at hand* instead of whatever fit in the first 25 KB.
+- A **SessionStart hook** injects standing rules (the prescriptive namespace) at boot.
+- **`/wrapup` step 4** is the write path: end of session, dedupe against existing entries, update rather than duplicate, skip anything derivable from the repo.
+
+The effect compounds: deploy gotchas, reviewer false-positive lists, infra quirks, and per-repo policies recorded once get injected exactly when relevant, sessions later. If you build your own, the architecture above is the whole trick — ranked retrieval per prompt beats a static file the moment your memory outgrows the truncation window.
+
 ### Bonus: mf-frontend-design
 
 [`skills/mf-frontend-design/SKILL.md`](skills/mf-frontend-design/SKILL.md) is the frontend-design skill we pair with this pipeline — tunable VARIANCE/MOTION/DENSITY dials, metric-based typography, color-calibration bans, RSC architecture rules, performance guardrails, and **screenshot-driven verification**. It's the natural companion to gate 3's visual pass: the skill makes the UI worth shipping; the eval proves a user actually receives it. Merged from Anthropic's `frontend-design` skill and Leonxlnx's `taste-skill` (MIT), with every rule from both preserved.
@@ -49,7 +74,7 @@ A 10-step review process with empirical validation at its core — *evidence ove
 1. Copy the commands into your Claude Code config:
 
    ```bash
-   cp commands/PRlaunch.md commands/deep-review.md ~/.claude/commands/
+   cp commands/PRlaunch.md commands/deep-review.md commands/wrapup.md ~/.claude/commands/
    ```
 
    And the skill (optional, for frontend work):
@@ -59,12 +84,12 @@ A 10-step review process with empirical validation at its core — *evidence ove
    cp skills/mf-frontend-design/SKILL.md ~/.claude/skills/mf-frontend-design/
    ```
 
-2. (Recommended) Install the enforcement hook:
+2. (Recommended) Install the hooks:
 
    ```bash
    mkdir -p ~/.claude/hooks
-   cp hooks/pr-gate.sh ~/.claude/hooks/
-   chmod +x ~/.claude/hooks/pr-gate.sh
+   cp hooks/*.sh ~/.claude/hooks/
+   chmod +x ~/.claude/hooks/*.sh
    ```
 
    Then add to `~/.claude/settings.json` (merge with any existing hooks):
@@ -76,7 +101,14 @@ A 10-step review process with empirical validation at its core — *evidence ove
          {
            "matcher": "Bash",
            "hooks": [
-             { "type": "command", "command": "~/.claude/hooks/pr-gate.sh", "timeout": 10 }
+             { "type": "command", "command": "~/.claude/hooks/pr-gate.sh", "timeout": 10 },
+             { "type": "command", "command": "~/.claude/hooks/check-careful.sh", "timeout": 10 }
+           ]
+         },
+         {
+           "matcher": "Edit|Write",
+           "hooks": [
+             { "type": "command", "command": "~/.claude/hooks/check-freeze.sh", "timeout": 10 }
            ]
          }
        ]
