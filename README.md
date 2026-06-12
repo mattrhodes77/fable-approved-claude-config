@@ -165,6 +165,28 @@ A full unit of work, end to end:
 - **Gate order matters.** Deep review first (nit fixes would mutate code it just judged), nits second, outcome eval last (it grades the experience, so the code should already be correct and clean — and its findings loop you back through the earlier gates).
 - **Structure informs findings; it never gates merges.** v6.8's structural lens deliberately rejects its source material's blocking stance: working code with a missed elegance opportunity ships, with the better shape recorded as a suggestion.
 
+## Influences — and where we differ
+
+Two projects shaped this config enough to deserve more than a credit line. Both are worth studying directly; both take approaches we deliberately didn't.
+
+### Cursor's thermo-nuclear-code-quality-review
+
+[The skill](https://github.com/cursor/plugins/blob/main/cursor-team-kit/skills/thermo-nuclear-code-quality-review/SKILL.md) is a pure structural-maintainability lens: hunt for "code judo" moves (reframings that delete whole branches/layers while preserving behavior), flag files crossing 1,000 lines, treat ad-hoc conditionals bolted onto unrelated flows as design problems, and be suspicious of thin wrappers, casts, and optionality that obscure the real contract.
+
+**What we took:** the entire detection lens. It became Deep Review v6.8's structural regression prompt, the file-size threshold check, and the code-judo question — it covered a genuine blind spot (our reviewers detected duplicate logic, silent failures, and unregistered integration points, but nothing structural).
+
+**Where we differ:** thermo-nuclear treats structural issues as *presumptive blockers* — its approval bar refuses working code that missed a visible simplification, and it pushes the reviewer to "be ambitious about restructuring." We inverted that: structural findings default to MEDIUM, never CRITICAL, and a missed simplification is a recorded suggestion, never a blocker. In a shop optimizing for merge velocity with multiple agents shipping in parallel, a reviewer that restructures ambitiously — or holds working code hostage to elegance — creates more risk than the mess it prevents. Structure informs findings; it never gates merges.
+
+### garrytan/gstack
+
+[gstack](https://github.com/garrytan/gstack) is a complete parallel AI-software-factory: ~80 skills spanning plan→build→review→QA→ship→retro, its own Playwright browser binary, a semantic memory layer (gbrain), event-sourced decision stores, per-question preference hooks, telemetry, and multi-host adapters (Claude Code, Codex, Cursor, …). It's the maximalist take — a whole operating layer installed on top of the agent.
+
+**What we took:** the two most portable guardrails — `check-careful.sh` and `check-freeze.sh` (improved: a JSON-extraction bugfix and the current hook output schema) — and its core enforcement philosophy, which pr-gate.sh applies to shipping: **safety rules belong in deterministic hooks the harness executes, not in instructions the model is asked to remember.** A prompt can be rationalized around; a PreToolUse hook can't.
+
+**Where we differ:** gstack builds its own infrastructure for nearly everything — custom browser, custom memory, custom state directories, custom analytics. We stay harness-native: plain markdown commands and skills in `~/.claude`, standard hooks in `settings.json`, MCP for memory, the stock browser tooling. That keeps every piece independently adoptable (you can take one file from this repo and use it today) and means there's no parallel ecosystem to maintain or upgrade. If you want the integrated-factory experience, gstack is the best version of it; if you want composable pieces on the stock harness, that's this repo.
+
+(A third influence, Jesse Vincent's [superpowers](https://github.com/obra/superpowers), is covered in section 1 — same philosophy applies: we vendored the single highest-leverage skill rather than adopting the whole suite, and we link the suite for those who want it.)
+
 ## Credits
 
 - Deep Review v6.8's structural-quality lens is adapted from Cursor's [thermo-nuclear-code-quality-review](https://github.com/cursor/plugins/blob/main/cursor-team-kit/skills/thermo-nuclear-code-quality-review/SKILL.md) skill (with its approval-blocking stance deliberately softened).
