@@ -30,6 +30,7 @@ hooks/pr-gate.sh                 # PreToolUse hook that blocks `gh pr create` wi
 hooks/check-careful.sh           # PreToolUse hook: confirmation prompt on destructive bash commands
 hooks/check-freeze.sh            # PreToolUse hook: hard-block edits outside a declared directory boundary
 skills/mf-frontend-design/       # bonus: the frontend-design skill that feeds gate 3's visual pass
+skills/brainstorming/            # the front of the funnel: design before code (from obra/superpowers, MIT)
 ```
 
 ### Deep Review v6.8 highlights
@@ -65,6 +66,12 @@ Not shippable in this repo (it's wired to our internal platform), but worth desc
 
 The effect compounds: deploy gotchas, reviewer false-positive lists, infra quirks, and per-repo policies recorded once get injected exactly when relevant, sessions later. If you build your own, the architecture above is the whole trick — ranked retrieval per prompt beats a static file the moment your memory outgrows the truncation window.
 
+### Brainstorming — the front of the funnel
+
+PRlaunch governs how work *leaves* a session; [`skills/brainstorming/SKILL.md`](skills/brainstorming/SKILL.md) governs how work *enters* one. It's the skill we run before any creative work: explore context, clarify intent one question at a time, propose 2–3 approaches with trade-offs, present a design, and **get approval before a single line of code** — with a hard gate against "this is too simple to need a design" (simple projects are exactly where unexamined assumptions burn the most work). Designs that go through this gate arrive at PRlaunch with their scope already agreed, which is most of why the review gates come back clean.
+
+Vendored verbatim from Jesse Vincent's [superpowers](https://github.com/obra/superpowers) plugin (MIT, license included alongside). If you want the whole methodology suite — TDD, systematic debugging, plan writing/execution — install the full plugin; this copy is for people who want the single highest-leverage skill without adopting the rest.
+
 ### Bonus: mf-frontend-design
 
 [`skills/mf-frontend-design/SKILL.md`](skills/mf-frontend-design/SKILL.md) is the frontend-design skill we pair with this pipeline — tunable VARIANCE/MOTION/DENSITY dials, metric-based typography, color-calibration bans, RSC architecture rules, performance guardrails, and **screenshot-driven verification**. It's the natural companion to gate 3's visual pass: the skill makes the UI worth shipping; the eval proves a user actually receives it. Merged from Anthropic's `frontend-design` skill and Leonxlnx's `taste-skill` (MIT), with every rule from both preserved.
@@ -77,12 +84,14 @@ The effect compounds: deploy gotchas, reviewer false-positive lists, infra quirk
    cp commands/PRlaunch.md commands/deep-review.md commands/wrapup.md ~/.claude/commands/
    ```
 
-   And the skill (optional, for frontend work):
+   And the skills (optional):
 
    ```bash
-   mkdir -p ~/.claude/skills/mf-frontend-design
-   cp skills/mf-frontend-design/SKILL.md ~/.claude/skills/mf-frontend-design/
+   mkdir -p ~/.claude/skills
+   cp -R skills/mf-frontend-design skills/brainstorming ~/.claude/skills/
    ```
+
+   (Skip `brainstorming` if you already run the [superpowers](https://github.com/obra/superpowers) plugin — it ships there.)
 
 2. (Recommended) Install the hooks:
 
@@ -140,7 +149,8 @@ The agent identifies the session's shippable units, confirms them with you, then
 ## Credits
 
 - Deep Review v6.8's structural-quality lens is adapted from Cursor's [thermo-nuclear-code-quality-review](https://github.com/cursor/plugins/blob/main/cursor-team-kit/skills/thermo-nuclear-code-quality-review/SKILL.md) skill (with its approval-blocking stance deliberately softened).
-- The careful/freeze safety-hook pattern that inspired the pr-gate enforcement style comes from [garrytan/gstack](https://github.com/garrytan/gstack).
+- The careful/freeze safety hooks are adapted from [garrytan/gstack](https://github.com/garrytan/gstack), which also inspired the pr-gate enforcement style.
+- The brainstorming skill is vendored verbatim from Jesse Vincent's [superpowers](https://github.com/obra/superpowers) (MIT).
 - Written with Claude Code, which also runs it.
 
 ## License
