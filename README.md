@@ -24,6 +24,7 @@ skills/systematic-debugging/     #    when something breaks                     
 commands/PRlaunch.md             # 3. SHIP — the pipeline: 7 phases, gate order, disposition rules
 commands/deep-review.md          #    Deep Review Process v6.8 — the methodology gate 1 runs
 commands/wrapup.md               # 4. WRAP UP — tracker sync, GitHub sync, branch hygiene, memory, report
+commands/babysit-prs.md          # 5. AFTER — hourly self-arming sweep of open PRs until reviews drain
 hooks/pr-gate.sh                 # enforcement: blocks `gh pr create` without a valid gate marker
 hooks/check-careful.sh           # guardrail: confirmation prompt on destructive bash commands
 hooks/check-freeze.sh            # guardrail: hard-block edits outside a declared directory boundary
@@ -84,6 +85,12 @@ A 10-step review process with empirical validation at its core — *evidence ove
 
 [`commands/wrapup.md`](commands/wrapup.md) is the session-end discipline PRlaunch's phase 6 runs, usable standalone as `/wrapup`: sync every touched ticket to reality, put every PR in the right state, leave zero dirty/unpushed branches, persist what future sessions need to know, commit your config repo, and report it all in one scannable message. The core rule is the same as PRlaunch's: **every finding and follow-up gets a disposition** — filed, fixed, or waived with a reason — never silently dropped.
 
+## 5. After the PR — babysit-prs
+
+Opening a PR isn't the end: automated reviewers post findings on their own schedule, rate limits stall queues, and stacked PRs get skipped by cloud bots entirely. [`commands/babysit-prs.md`](commands/babysit-prs.md) is a **self-arming hourly sweep** of every open PR you've authored across the org: it classifies each PR's review state, applies mechanical reviewer fixes (with a hard rule that behavioral changes must pass the *actual test suite*, not just a syntax check — learned from a one-line fix that parsed clean and shipped a red suite), re-triggers stalled reviews within rate-limit budgets, and runs the reviewer's CLI in the background for stacked PRs the cloud bot refuses — but only when you're not at the keyboard, so it never burns your quota.
+
+The interesting machinery is the **convergence rule**: every sweep fingerprints the queue (PR × state × latest-bot-activity, hashed) and the loop stays armed *as long as the queue is moving* — then auto-stops in exactly two cases: drained (every PR is CLEAN or NEEDS-HUMAN) or stalled (12 frozen sweeps ≈ the bot is down). No runaway polling, no babysitting the babysitter. It never merges; the report ends with a clean-list and a "likely merge" call-out driven by a per-repo policy table you define for your team (ours is redacted — write your own).
+
 ---
 
 ## Cross-cutting: safety hooks
@@ -111,7 +118,7 @@ The effect compounds: deploy gotchas, reviewer false-positive lists, infra quirk
 1. Copy the commands into your Claude Code config:
 
    ```bash
-   cp commands/PRlaunch.md commands/deep-review.md commands/wrapup.md ~/.claude/commands/
+   cp commands/*.md ~/.claude/commands/
    ```
 
    And the skills:
