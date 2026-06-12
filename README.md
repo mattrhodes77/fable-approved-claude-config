@@ -28,6 +28,7 @@ commands/babysit-prs.md          # 5. AFTER — hourly self-arming sweep of open
 hooks/pr-gate.sh                 # enforcement: blocks `gh pr create` without a valid gate marker
 hooks/check-careful.sh           # guardrail: confirmation prompt on destructive bash commands
 hooks/check-freeze.sh            # guardrail: hard-block edits outside a declared directory boundary
+hooks/check-worktree.sh          # guardrail: deny `git commit` in a primary clone — work in worktrees
 skills/…                         # + the supporting superpowers set: using-superpowers (skill dispatch),
                                  #   using-git-worktrees, verification-before-completion,
                                  #   subagent-driven-development, finishing-a-development-branch,
@@ -40,7 +41,7 @@ skills/…                         # + the supporting superpowers set: using-sup
 
 [`skills/brainstorming/SKILL.md`](skills/brainstorming/SKILL.md) governs how work *enters* a session. It runs before any creative work: explore context, clarify intent one question at a time, propose 2–3 approaches with trade-offs, present a design, and **get approval before a single line of code** — with a hard gate against "this is too simple to need a design" (simple projects are exactly where unexamined assumptions burn the most work). Designs that go through this gate arrive at PRlaunch with their scope already agreed, which is most of why the review gates come back clean.
 
-Brainstorming doesn't stand alone — it hands off to [`writing-plans`](skills/writing-plans/SKILL.md) (turn the approved design into a step-by-step implementation plan) and [`executing-plans`](skills/executing-plans/SKILL.md) (work the plan with review checkpoints). Every repo we work in has a `docs/superpowers/` directory of dated specs and plans this loop produced. The supporting cast is vendored too: [`using-superpowers`](skills/using-superpowers/SKILL.md) (the skill-dispatch discipline — injected at session start so skills actually fire), [`using-git-worktrees`](skills/using-git-worktrees/SKILL.md) (why our worktree-per-ticket pattern exists), [`subagent-driven-development`](skills/subagent-driven-development/SKILL.md), [`finishing-a-development-branch`](skills/finishing-a-development-branch/SKILL.md), and the [`requesting-`](skills/requesting-code-review/SKILL.md)/[`receiving-code-review`](skills/receiving-code-review/SKILL.md) pair.
+Brainstorming doesn't stand alone — it hands off to [`writing-plans`](skills/writing-plans/SKILL.md) (turn the approved design into a step-by-step implementation plan) and [`executing-plans`](skills/executing-plans/SKILL.md) (work the plan with review checkpoints). Every repo we work in has a `docs/superpowers/` directory of dated specs and plans this loop produced. The supporting cast is vendored too: [`using-superpowers`](skills/using-superpowers/SKILL.md) (the skill-dispatch discipline — injected at session start so skills actually fire), [`using-git-worktrees`](skills/using-git-worktrees/SKILL.md) (why our worktree-per-ticket pattern exists — mechanically enforced by [`hooks/check-worktree.sh`](hooks/check-worktree.sh)), [`subagent-driven-development`](skills/subagent-driven-development/SKILL.md), [`finishing-a-development-branch`](skills/finishing-a-development-branch/SKILL.md), and the [`requesting-`](skills/requesting-code-review/SKILL.md)/[`receiving-code-review`](skills/receiving-code-review/SKILL.md) pair.
 
 All of it is vendored verbatim from Jesse Vincent's [superpowers](https://github.com/obra/superpowers) plugin (MIT, license included in each skill directory). **We run the full plugin in production, daily** — this is the actively-used subset, snapshotted so this repo is complete on its own. For the latest versions and the rest of the suite, install the live plugin; upstream keeps evolving and these copies don't auto-update.
 
@@ -95,10 +96,11 @@ The interesting machinery is the **convergence rule**: every sweep fingerprints 
 
 ## Cross-cutting: safety hooks
 
-Two deterministic guardrails adapted from [garrytan/gstack](https://github.com/garrytan/gstack) (with a JSON-extraction bugfix — the originals' grep-based parsing missed commands containing escaped quotes, e.g. `psql -c "DROP TABLE …"` — and output modernized to the current `hookSpecificOutput` hook schema):
+Three deterministic guardrails. The first two are adapted from [garrytan/gstack](https://github.com/garrytan/gstack) (with a JSON-extraction bugfix — the originals' grep-based parsing missed commands containing escaped quotes, e.g. `psql -c "DROP TABLE …"` — and output modernized to the current `hookSpecificOutput` hook schema); the third is ours:
 
 - **`check-careful.sh`** — forces a confirmation prompt on destructive bash, deliberately tuned to be **rare**: `rm -rf` of real paths, true `git push --force` (`--force-with-lease` — the sanctioned safe variant — passes), SQL `DROP`/`TRUNCATE` *via an actual database client* (word-matching the whole command fires on prose in commit messages — we learned), `kubectl delete`, `docker rm -f`/`system prune`. Deletes of build artifacts (`node_modules`, `.next`, `dist`, …) and temp paths (`/tmp/*` but not `/tmp` itself) pass silently, and the target parser is compound-command-aware (stops at `;`/`&&`/`|`). The tuning principle: a guardrail that prompts on routine commands trains you to click through, which is worse than no guardrail. Gate only what's rare *and* catastrophic.
 - **`check-freeze.sh`** — dormant until you write a directory path to `~/.claude/hooks/freeze-dir.txt`, then **hard-blocks** any Edit/Write outside that boundary. It turns "stay in this repo" from an instruction the agent must remember into a rule the harness enforces. `rm ~/.claude/hooks/freeze-dir.txt` to unfreeze.
+- **`check-worktree.sh`** — **denies `git commit` in a primary clone** (`.git` is a directory) and allows it in linked worktrees (`.git` is a gitfile). This is the mechanical enforcement of the worktree-per-ticket pattern that [`using-git-worktrees`](skills/using-git-worktrees/SKILL.md) teaches, and it exists for the same reason every rule here does: humans and agents work the same repos in parallel, and an agent commit in a shared primary clone can be silently clobbered or buried in reflog by a human rebase/amend/branch-rename. We lost commits this way before making it a rule — and the rule still depended on the model remembering it, so now it's a hook. It resolves the repo the commit actually targets (`git -C <path>` first, then the last `cd` in the command, then the session cwd), so compound commands and subagent cwd-drift don't slip past it. Scratch clones under `/tmp` are exempt, and you can exempt a repo deliberately: `echo /path/to/repo >> ~/.claude/hooks/worktree-exempt.txt`. Reading and exploring in a primary clone stays unrestricted — only mutation needs isolation.
 
 ## Cross-cutting: how we do memory
 
@@ -148,7 +150,8 @@ The effect compounds: deploy gotchas, reviewer false-positive lists, infra quirk
            "matcher": "Bash",
            "hooks": [
              { "type": "command", "command": "~/.claude/hooks/pr-gate.sh", "timeout": 10 },
-             { "type": "command", "command": "~/.claude/hooks/check-careful.sh", "timeout": 10 }
+             { "type": "command", "command": "~/.claude/hooks/check-careful.sh", "timeout": 10 },
+             { "type": "command", "command": "~/.claude/hooks/check-worktree.sh", "timeout": 10 }
            ]
          },
          {
