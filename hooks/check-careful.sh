@@ -69,30 +69,28 @@ if printf '%s' "$CMD" | grep -qE '(^|[;&|[:space:]])rm\s+(-[a-zA-Z]*r[a-zA-Z]*(\
 fi
 
 # --- Destructive pattern checks ---
+# Deliberately narrow: only patterns that are (a) rare in normal flow and
+# (b) catastrophic when wrong. Routine-but-sharp commands (git reset --hard,
+# git checkout ., --force-with-lease pushes) are NOT gated — they prompted
+# constantly and trained the user to click through, which is worse than
+# no gate at all.
 WARN=""
 
 if printf '%s' "$CMD" | grep -qE 'rm\s+(-[a-zA-Z]*r|--recursive)' 2>/dev/null; then
-  WARN="Destructive: recursive delete (rm -r). This permanently removes files."
+  WARN="Destructive: recursive delete (rm -r) of a non-temp, non-build path. This permanently removes files."
 fi
 
-if [ -z "$WARN" ] && printf '%s' "$CMD_LOWER" | grep -qE 'drop\s+(table|database)' 2>/dev/null; then
-  WARN="Destructive: SQL DROP detected. This permanently deletes database objects."
+# True force-push only: --force-with-lease is the sanctioned safe variant and must pass.
+if [ -z "$WARN" ] && printf '%s' "$CMD" | grep -qE 'git\s+push\s+[^;|&]*(--force([[:space:]]|$)|-f([[:space:]]|$))' 2>/dev/null \
+  && ! printf '%s' "$CMD" | grep -q -- '--force-with-lease' 2>/dev/null; then
+  WARN="Destructive: git push --force (without --with-lease) rewrites remote history. Use --force-with-lease instead."
 fi
 
-if [ -z "$WARN" ] && printf '%s' "$CMD_LOWER" | grep -qE '\btruncate\b' 2>/dev/null; then
-  WARN="Destructive: TRUNCATE detected. This deletes all rows / file contents."
-fi
-
-if [ -z "$WARN" ] && printf '%s' "$CMD" | grep -qE 'git\s+push\s+.*(-f\b|--force)' 2>/dev/null; then
-  WARN="Destructive: git force-push rewrites remote history. Other contributors may lose work."
-fi
-
-if [ -z "$WARN" ] && printf '%s' "$CMD" | grep -qE 'git\s+reset\s+--hard' 2>/dev/null; then
-  WARN="Destructive: git reset --hard discards all uncommitted changes."
-fi
-
-if [ -z "$WARN" ] && printf '%s' "$CMD" | grep -qE 'git\s+(checkout|restore)\s+\.' 2>/dev/null; then
-  WARN="Destructive: discards all uncommitted changes in the working tree."
+# SQL DROP/TRUNCATE only in the context of a SQL client invocation — word-matching
+# the whole command string fires on prose in commit-message heredocs.
+if [ -z "$WARN" ] && printf '%s' "$CMD_LOWER" | grep -qE '(psql|mysql|sqlite3)\b' 2>/dev/null \
+  && printf '%s' "$CMD_LOWER" | grep -qE 'drop\s+(table|database)|truncate\s' 2>/dev/null; then
+  WARN="Destructive: SQL DROP/TRUNCATE via a database client. This permanently deletes data."
 fi
 
 if [ -z "$WARN" ] && printf '%s' "$CMD" | grep -qE 'kubectl\s+delete' 2>/dev/null; then
