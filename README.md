@@ -1,6 +1,6 @@
-# PRlaunch
+# MindFortress CC Config
 
-**A pre-PR quality pipeline for [Claude Code](https://claude.com/claude-code).** Three local gates — a deep code review, a secondary automated review, and a live outcome eval from the user's seat — run against your working tree *before* a PR is ever opened. A hook mechanically blocks `gh pr create` until the exact bytes you're shipping have passed every gate.
+The public [Claude Code](https://claude.com/claude-code) config we run at MindFortress. The centerpiece is **PRlaunch** — a pre-PR quality pipeline: three local gates (a deep code review, a secondary automated review, and a live outcome eval from the user's seat) run against your working tree *before* a PR is ever opened, and a hook mechanically blocks `gh pr create` until the exact bytes you're shipping have passed every gate.
 
 Built and battle-tested running a multi-repo production shop with Claude Code doing most of the shipping. Every rule in here exists because its absence caused a real incident.
 
