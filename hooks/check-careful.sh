@@ -27,22 +27,41 @@ fi
 
 CMD_LOWER=$(printf '%s' "$CMD" | tr '[:upper:]' '[:lower:]')
 
-# --- Safe exceptions: rm -rf of build artifacts only ---
-if printf '%s' "$CMD" | grep -qE 'rm\s+(-[a-zA-Z]*r[a-zA-Z]*\s+|--recursive\s+)' 2>/dev/null; then
+# --- Safe exceptions: rm -rf of temp paths or build artifacts only ---
+# Walk tokens tracking whether we're inside an rm invocation; separators
+# (;, &&, ||, |) end it, so trailing `cd ...`/`git ...` segments in compound
+# commands don't count as rm targets.
+if printf '%s' "$CMD" | grep -qE '(^|[;&|[:space:]])rm\s+(-[a-zA-Z]*r[a-zA-Z]*(\s|$)|--recursive(\s|$))' 2>/dev/null; then
   SAFE_ONLY=true
-  RM_ARGS=$(printf '%s' "$CMD" | sed -E 's/.*rm[[:space:]]+(-[a-zA-Z]+[[:space:]]+)*//;s/--recursive[[:space:]]*//')
-  for target in $RM_ARGS; do
-    case "$target" in
-      */node_modules|node_modules|*/\.next|\.next|*/dist|dist|*/__pycache__|__pycache__|*/\.cache|\.cache|*/build|build|*/\.turbo|\.turbo|*/coverage|coverage)
-        ;; # safe target
-      -*)
-        ;; # flag, skip
-      *)
-        SAFE_ONLY=false
-        break
+  IN_RM=false
+  set -f
+  for tok in $CMD; do
+    case "$tok" in
+      rm)
+        IN_RM=true
+        continue
+        ;;
+      *';'*|*'&&'*|*'||'*|*'|'*|*'&'*)
+        IN_RM=false
+        continue
         ;;
     esac
+    if [ "$IN_RM" = true ]; then
+      case "$tok" in
+        -*) ;;       # flag
+        *'>'*|*'<'*) ;; # redirection
+        /tmp/?*|/private/tmp/?*|/var/folders/?*)
+          ;; # temp path
+        */node_modules|node_modules|*/\.next|\.next|*/dist|dist|*/__pycache__|__pycache__|*/\.cache|\.cache|*/build|build|*/\.turbo|\.turbo|*/coverage|coverage)
+          ;; # build artifact
+        *)
+          SAFE_ONLY=false
+          break
+          ;;
+      esac
+    fi
   done
+  set +f
   if [ "$SAFE_ONLY" = true ]; then
     echo '{}'
     exit 0

@@ -15,23 +15,33 @@ Built and battle-tested running a multi-repo production shop with Claude Code do
 ## What's in the box
 
 ```
-skills/brainstorming/            # 1. BRAINSTORM — design before code (from obra/superpowers, MIT)
+skills/brainstorming/            # 1. BRAINSTORM — design before code           (obra/superpowers, MIT)
+skills/writing-plans/            #    …then write the implementation plan        (obra/superpowers, MIT)
+skills/executing-plans/          #    …then execute it with review checkpoints   (obra/superpowers, MIT)
 skills/mf-frontend-design/       # 2. BUILD — the frontend-design skill every FE surface goes through
+skills/test-driven-development/  #    build-stage discipline                     (obra/superpowers, MIT)
+skills/systematic-debugging/     #    when something breaks                      (obra/superpowers, MIT)
 commands/PRlaunch.md             # 3. SHIP — the pipeline: 7 phases, gate order, disposition rules
 commands/deep-review.md          #    Deep Review Process v6.8 — the methodology gate 1 runs
 commands/wrapup.md               # 4. WRAP UP — tracker sync, GitHub sync, branch hygiene, memory, report
 hooks/pr-gate.sh                 # enforcement: blocks `gh pr create` without a valid gate marker
 hooks/check-careful.sh           # guardrail: confirmation prompt on destructive bash commands
 hooks/check-freeze.sh            # guardrail: hard-block edits outside a declared directory boundary
+skills/…                         # + the supporting superpowers set: using-superpowers (skill dispatch),
+                                 #   using-git-worktrees, verification-before-completion,
+                                 #   subagent-driven-development, finishing-a-development-branch,
+                                 #   requesting-code-review, receiving-code-review
 ```
 
 ---
 
-## 1. Brainstorm — design before code
+## 1. Brainstorm — design before code, then plan, then execute
 
 [`skills/brainstorming/SKILL.md`](skills/brainstorming/SKILL.md) governs how work *enters* a session. It runs before any creative work: explore context, clarify intent one question at a time, propose 2–3 approaches with trade-offs, present a design, and **get approval before a single line of code** — with a hard gate against "this is too simple to need a design" (simple projects are exactly where unexamined assumptions burn the most work). Designs that go through this gate arrive at PRlaunch with their scope already agreed, which is most of why the review gates come back clean.
 
-Vendored verbatim from Jesse Vincent's [superpowers](https://github.com/obra/superpowers) plugin (MIT, license included alongside). To be clear: **we run the full plugin, daily** — brainstorming hands off to its `writing-plans` / `executing-plans` skills, and every repo we work in has a `docs/superpowers/` directory of dated specs and plans to show for it; its `using-git-worktrees` discipline is why our worktree-per-ticket pattern exists, and its skill-dispatch rules are injected into every session at start. We vendor only brainstorming here because it's the one stage this repo's story needs inline — the rest of the suite is one plugin install away and better consumed from the source than forked.
+Brainstorming doesn't stand alone — it hands off to [`writing-plans`](skills/writing-plans/SKILL.md) (turn the approved design into a step-by-step implementation plan) and [`executing-plans`](skills/executing-plans/SKILL.md) (work the plan with review checkpoints). Every repo we work in has a `docs/superpowers/` directory of dated specs and plans this loop produced. The supporting cast is vendored too: [`using-superpowers`](skills/using-superpowers/SKILL.md) (the skill-dispatch discipline — injected at session start so skills actually fire), [`using-git-worktrees`](skills/using-git-worktrees/SKILL.md) (why our worktree-per-ticket pattern exists), [`subagent-driven-development`](skills/subagent-driven-development/SKILL.md), [`finishing-a-development-branch`](skills/finishing-a-development-branch/SKILL.md), and the [`requesting-`](skills/requesting-code-review/SKILL.md)/[`receiving-code-review`](skills/receiving-code-review/SKILL.md) pair.
+
+All of it is vendored verbatim from Jesse Vincent's [superpowers](https://github.com/obra/superpowers) plugin (MIT, license included in each skill directory). **We run the full plugin in production, daily** — this is the actively-used subset, snapshotted so this repo is complete on its own. For the latest versions and the rest of the suite, install the live plugin; upstream keeps evolving and these copies don't auto-update.
 
 ## 2. Build — mf-frontend-design
 
@@ -39,7 +49,7 @@ Vendored verbatim from Jesse Vincent's [superpowers](https://github.com/obra/sup
 
 It's also why PRlaunch's gate 3 works: the skill builds UI to a standard *and verifies it with screenshots as it goes*, so by the time the outcome eval grades what the user receives, it's confirming a discipline that ran during the build — not discovering taste problems for the first time. Merged from Anthropic's `frontend-design` skill and Leonxlnx's `taste-skill` (MIT), with every rule from both preserved.
 
-(Backend work has no equivalent skill in this repo — its build-stage discipline lives in the deep-review checklists that gate it on the way out.)
+Build-stage discipline that isn't frontend-specific is superpowers territory: [`test-driven-development`](skills/test-driven-development/SKILL.md) for any feature or bugfix, [`systematic-debugging`](skills/systematic-debugging/SKILL.md) when something breaks (root-cause before fixes, with its reference docs on tracing and defense-in-depth), and [`verification-before-completion`](skills/verification-before-completion/SKILL.md) — evidence before any "it works" claim, which is the same ethos PRlaunch's gates enforce at ship time.
 
 ## 3. Ship — PRlaunch
 
@@ -80,7 +90,7 @@ A 10-step review process with empirical validation at its core — *evidence ove
 
 Two deterministic guardrails adapted from [garrytan/gstack](https://github.com/garrytan/gstack) (with a JSON-extraction bugfix — the originals' grep-based parsing missed commands containing escaped quotes, e.g. `psql -c "DROP TABLE …"` — and output modernized to the current `hookSpecificOutput` hook schema):
 
-- **`check-careful.sh`** — forces a confirmation prompt on destructive bash: `rm -rf`, SQL `DROP`/`TRUNCATE`, `git push --force`, `git reset --hard`, `git checkout/restore .`, `kubectl delete`, `docker rm -f`/`system prune`. Build-artifact deletes (`node_modules`, `.next`, `dist`, `__pycache__`, …) pass silently. Especially worth having if you run autonomous loops.
+- **`check-careful.sh`** — forces a confirmation prompt on destructive bash: `rm -rf`, SQL `DROP`/`TRUNCATE`, `git push --force`, `git reset --hard`, `git checkout/restore .`, `kubectl delete`, `docker rm -f`/`system prune`. Deletes of build artifacts (`node_modules`, `.next`, `dist`, `__pycache__`, …) and temp paths (`/tmp/*`, `/var/folders/*` — but not `/tmp` itself) pass silently, and the target parser is compound-command-aware: it stops at `;`/`&&`/`|`, so a safe delete followed by `cd … && git …` doesn't prompt while a dangerous `rm` hidden *after* a separator is still caught. Especially worth having if you run autonomous loops.
 - **`check-freeze.sh`** — dormant until you write a directory path to `~/.claude/hooks/freeze-dir.txt`, then **hard-blocks** any Edit/Write outside that boundary. It turns "stay in this repo" from an instruction the agent must remember into a rule the harness enforces. `rm ~/.claude/hooks/freeze-dir.txt` to unfreeze.
 
 ## Cross-cutting: how we do memory
@@ -108,10 +118,10 @@ The effect compounds: deploy gotchas, reviewer false-positive lists, infra quirk
 
    ```bash
    mkdir -p ~/.claude/skills
-   cp -R skills/mf-frontend-design skills/brainstorming ~/.claude/skills/
+   cp -R skills/* ~/.claude/skills/
    ```
 
-   (Skip `brainstorming` if you already run the [superpowers](https://github.com/obra/superpowers) plugin — it ships there.)
+   (Skip the superpowers-derived skills if you already run the [superpowers](https://github.com/obra/superpowers) plugin — they ship there, and the live plugin auto-updates while these snapshots don't. `mf-frontend-design` is ours and only lives here.)
 
 2. (Recommended) Install the hooks:
 
@@ -185,13 +195,13 @@ Two projects shaped this config enough to deserve more than a credit line. Both 
 
 **Where we differ:** gstack builds its own infrastructure for nearly everything — custom browser, custom memory, custom state directories, custom analytics. We stay harness-native: plain markdown commands and skills in `~/.claude`, standard hooks in `settings.json`, MCP for memory, the stock browser tooling. That keeps every piece independently adoptable (you can take one file from this repo and use it today) and means there's no parallel ecosystem to maintain or upgrade. If you want the integrated-factory experience, gstack is the best version of it; if you want composable pieces on the stock harness, that's this repo.
 
-(A third influence, Jesse Vincent's [superpowers](https://github.com/obra/superpowers), is different in kind: it's not just an influence — we run the full plugin in production alongside this config. Brainstorm → write plan → execute plan is the superpowers loop; this repo picks up where that loop ends, at shipping. We vendor only the brainstorming skill here and point you at the plugin for the rest, because actively-maintained upstream beats a fork.)
+(A third influence, Jesse Vincent's [superpowers](https://github.com/obra/superpowers), is different in kind: it's not just an influence — we run the full plugin in production alongside this config. Brainstorm → write plan → execute plan is the superpowers loop; this repo picks up where that loop ends, at shipping. The actively-used subset is vendored in `skills/` so this repo stands alone, but the live plugin is the better install — upstream keeps evolving and snapshots don't.)
 
 ## Credits
 
 - Deep Review v6.8's structural-quality lens is adapted from Cursor's [thermo-nuclear-code-quality-review](https://github.com/cursor/plugins/blob/main/cursor-team-kit/skills/thermo-nuclear-code-quality-review/SKILL.md) skill (with its approval-blocking stance deliberately softened).
 - The careful/freeze safety hooks are adapted from [garrytan/gstack](https://github.com/garrytan/gstack), which also inspired the pr-gate enforcement style.
-- The brainstorming skill is vendored verbatim from Jesse Vincent's [superpowers](https://github.com/obra/superpowers) (MIT).
+- The brainstorming, planning, TDD, debugging, worktree, verification, and code-review skills are vendored verbatim from Jesse Vincent's [superpowers](https://github.com/obra/superpowers) (MIT, license included in each directory).
 - The frontend-design skill is merged from Anthropic's `frontend-design` skill and Leonxlnx's `taste-skill` (MIT).
 - Written with Claude Code, which also runs it.
 
