@@ -205,7 +205,8 @@ For each unit:
 3. **GitHub** — verify all PRs from this run show correctly; note any other open PRs touched this session.
 4. **Branches** — confirm no leftover dirty/unpushed state in any repo touched.
 5. **Notes** — capture anything non-obvious from this run (gotchas, decisions, unexpected findings worth remembering) in whatever memory system you use.
-6. **Report** — one consolidated message:
+6. **Cleanup queue** — `python3 ~/.claude/hooks/cleanup-sweep.py --count`. If `>0`, run the `/cleanup` sweep (show queued deletes, confirm, re-run approved ones — the careful hook prompts per ⚠ item since you're attended — `--remove <i>` each handled entry, descending). Report cleared vs. left; `0` → "Cleanup: nothing pending".
+7. **Report** — one consolidated message:
 
 ```
 ## PRlaunch complete

@@ -287,6 +287,12 @@ Print one compact markdown table:
 Open the report with one line on the CLI bucket:
 `_CLI: quiet=<yes/no:reason> · harvested=<N> · launched=<N> · in-flight=<N>_`
 
+**Cleanup debt (surface only — this sweep is unattended, do NOT resolve it).** The careful hook defers unrecognized `rm -r` deletes to a queue during unattended runs. Surface the count so the owner clears it when present (via `/cleanup`, `/wrapup`, or `/PRlaunch`):
+```bash
+python3 ~/.claude/hooks/cleanup-sweep.py --count
+```
+If `>0`, add a report line: `_🧹 Cleanup: N delete(s) pending — run /cleanup to clear._` Never run the deletes here (no human to approve ⚠ items).
+
 **Clean-list section (every sweep).** After the action table, list every CLEAN PR with a one-line blurb (title + ticket + one phrase of substance — enough to merge-judge without opening it). Then call out which ones the owner can LIKELY MERGE, per a standing per-repo policy table you define for your team. Ours distinguishes repos where all clean PRs are the owner's to merge, repos where only certain subsystems are (the rest belong to teammates' lanes), and repos where merging is always a case-by-case human call. Encode yours, for example:
 
 | Repo | Likely-merge policy |
