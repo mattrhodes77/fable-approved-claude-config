@@ -66,6 +66,14 @@ Do NOT skip it.
 
 Opt-out: if `$ARGUMENTS` is the literal string `no-loop`, skip 0b — the explicit one-shot escape hatch. Any other arg is treated as the repo filter (Step 1).
 
+**0c. Arm careful-hook loop-mode (skip if `no-loop`, same gating as 0b).** A confirmation prompt that no one is there to answer wedges an unattended loop. This arms `check-careful.sh` loop-mode so routine destructive cleanup (worktree / `.venv*` / `test_*.db` teardown not on the safe-list) auto-proceeds and gets logged instead of prompting. The window self-expires and is re-armed each iteration, so it disarms shortly after the loop stops — a leftover never poisons a later interactive session:
+
+```bash
+~/.claude/hooks/loop-mode-arm.sh 90 2>/dev/null || true
+```
+
+Anything auto-proceeded is recorded in `~/.claude/cleanup-needed.log` — if it's non-empty at the end of the run, surface a one-line "cleanup pending" note in the final report.
+
 ## Step 1 — Discover all open PRs you authored across the entire org
 
 ONE call gives every open PR across every repo:
