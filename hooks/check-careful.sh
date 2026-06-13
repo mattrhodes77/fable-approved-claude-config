@@ -11,13 +11,17 @@
 # not a regex verdict. Other rare-but-catastrophic commands (true force-push,
 # SQL DROP/TRUNCATE, kubectl delete, docker prune) get a plain-English warning.
 #
-# Loop-mode: when ~/.claude/hooks/loop-mode exists and is unexpired (an
-# unattended /loop or /goal run), the gate never wedges:
-#   - an unrecognized ⚠ delete is DEFERRED (not run) and appended as JSON to
-#     ~/.claude/cleanup-needed.log for a later cleanup sweep (babysit surfaces
-#     it; /cleanup, /wrapup, /PRlaunch resolve it);
-#   - other flagged non-delete commands auto-proceed.
-# See loop-mode-arm.sh and cleanup-sweep.py.
+# Deletes NEVER block a goal/loop. Because a /goal is an undetectable Stop hook
+# (no env/stdin/file signal), the hook can't know whether a loop is driving it —
+# so it never prompts on a delete in ANY context: recognized-safe deletes run
+# silently; an unrecognized ⚠ delete is DEFERRED (not run) and appended as JSON
+# to ~/.claude/cleanup-needed.log for a later cleanup sweep (/cleanup, /wrapup,
+# /PRlaunch resolve it; babysit surfaces it). The only interactive prompt left
+# is for rare non-delete catastrophes (force-push, SQL DROP, kubectl/docker).
+#
+# Loop-mode (~/.claude/hooks/loop-mode): only affects those non-delete commands
+# now — when armed, they auto-proceed instead of prompting. See loop-mode-arm.sh
+# and cleanup-sweep.py.
 #   enable:  ~/.claude/hooks/loop-mode-arm.sh [minutes]   (or: touch the file)
 #   disable: rm ~/.claude/hooks/loop-mode
 # Adapted from garrytan/gstack careful/bin/check-careful.sh.
@@ -105,23 +109,28 @@ if [ -z "$WARN" ]; then
   exit 0
 fi
 
+# A DELETE NEVER BLOCKS a goal/loop. The hook can't tell whether a /goal or
+# /loop is driving it (a /goal is an undetectable Stop hook), so the only
+# guarantee is to never prompt on a delete in ANY context: an unrecognized rm is
+# DEFERRED (not run) and queued for a cleanup sweep, and the run continues.
+# Recognized-safe deletes already returned `{}` above and ran silently.
+if [ "$WARN_IS_RM" = true ]; then
+  NOW=$(date +%s 2>/dev/null || echo 0)
+  CWD=$(printf '%s' "$INPUT" | jq -r '.cwd // ""' 2>/dev/null || true)
+  jq -nc --argjson ts "${NOW:-0}" --arg cwd "$CWD" --arg cmd "$CMD" --arg w "$WARN" \
+    '{ts:$ts, cwd:$cwd, cmd:$cmd, reason:$w}' >> "$CLEANUP_LOG" 2>/dev/null || true
+  jq -n '{
+    systemMessage: "[careful] Did not run an unrecognized delete — queued it for cleanup instead (run /cleanup to review/clear). This never blocks a goal or loop.",
+    hookSpecificOutput: {hookEventName:"PreToolUse", permissionDecision:"deny", permissionDecisionReason:"[careful] Deferred this delete to ~/.claude/cleanup-needed.log — NOT executed (intentional; deletes never block a goal/loop). Safe to continue; do NOT retry. Review later with /cleanup."}
+  }' 2>/dev/null && exit 0
+  echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"[careful] deferred delete to cleanup queue; continue, do not retry"}}'
+  exit 0
+fi
+
+# Non-delete flagged commands (force-push, SQL DROP, kubectl/docker): rare and
+# catastrophic. Auto-proceed under loop-mode; otherwise ask. (This is the only
+# remaining prompt; it does not fire on deletes.)
 if loop_mode_active; then
-  if [ "$WARN_IS_RM" = true ]; then
-    # Unattended + a delete we don't fully recognize: DON'T run it (can't ask a
-    # human, and deletes are safe to defer). Queue it for a cleanup sweep
-    # (babysit surfaces it; wrapup/PRlaunch/cleanup resolve it) and continue.
-    NOW=$(date +%s 2>/dev/null || echo 0)
-    CWD=$(printf '%s' "$INPUT" | jq -r '.cwd // ""' 2>/dev/null || true)
-    jq -nc --argjson ts "${NOW:-0}" --arg cwd "$CWD" --arg cmd "$CMD" --arg w "$WARN" \
-      '{ts:$ts, cwd:$cwd, cmd:$cmd, reason:$w}' >> "$CLEANUP_LOG" 2>/dev/null || true
-    jq -n '{
-      systemMessage: "[careful/loop-mode] Deferred an unrecognized delete to the cleanup queue (not executed). A sweep (/cleanup, /wrapup, or /PRlaunch) will resolve it.",
-      hookSpecificOutput: {hookEventName:"PreToolUse", permissionDecision:"deny", permissionDecisionReason:"[careful] Deferred this delete to ~/.claude/cleanup-needed.log (loop-mode) — NOT executed, and that is intentional. Safe to continue; do NOT retry. It will be reviewed in a cleanup sweep."}
-    }' 2>/dev/null && exit 0
-    echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"[careful] deferred delete to cleanup queue; continue, do not retry"}}'
-    exit 0
-  fi
-  # Non-delete flagged command (force-push, DROP, …): auto-proceed + note.
   jq -n --arg cmd "$CMD" '{
     systemMessage: "[careful/loop-mode] Auto-proceeded a flagged non-delete command.",
     hookSpecificOutput: {hookEventName:"PreToolUse", permissionDecision:"allow", permissionDecisionReason:"[careful] loop-mode active — auto-proceeded (non-delete)"},
