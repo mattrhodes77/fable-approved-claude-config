@@ -6,7 +6,7 @@ description: Wrap up the session — sync tracker, sync GitHub, clean dirty bran
 
 End-of-session checklist. Work through each step in order, then deliver one consolidated report at the end. Do NOT skip steps. If a step has nothing to do, say so explicitly in the report ("Tracker: nothing to update").
 
-Use TodoWrite to track the 6 steps. Mark each done as you go.
+Use TodoWrite to track the 7 steps. Mark each done as you go.
 
 ---
 
@@ -102,7 +102,18 @@ git status --short
 
 (Skip this step if you don't track your config in git — though you should.)
 
-## 6. Report
+## 6. Cleanup queue
+
+Goal: clear delete-debt the careful hook deferred during unattended loops (it queues any unrecognized `rm -r` to `~/.claude/cleanup-needed.log` rather than wedging the loop).
+
+```bash
+python3 ~/.claude/hooks/cleanup-sweep.py --count
+```
+
+- `0` → "Cleanup: nothing pending" in the report.
+- `>0` → run the **`/cleanup`** sweep: show the queued deletes (`cleanup-sweep.py`), confirm which to run, re-run the approved commands (you're attended, so the careful hook prompts per ⚠ item / silently allows anything now-recognized), and drop each handled entry with `cleanup-sweep.py --remove <i>` in **descending** index order. Report how many were cleared vs. left.
+
+## 7. Report
 
 One consolidated message. Structure:
 
@@ -118,6 +129,10 @@ One consolidated message. Structure:
 - PR #123 flipped draft → ready
 - PR #456 has 2 open reviewer findings — left for next session
 - (or: nothing to update)
+
+**Cleanup**
+- 3 deferred deletes cleared, 1 left (declined)
+- (or: nothing pending)
 
 **Branches**
 - repo-a/feat/foo — clean, pushed, PR #123

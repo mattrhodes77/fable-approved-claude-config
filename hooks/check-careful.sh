@@ -11,9 +11,13 @@
 # not a regex verdict. Other rare-but-catastrophic commands (true force-push,
 # SQL DROP/TRUNCATE, kubectl delete, docker prune) get a plain-English warning.
 #
-# Loop-mode: when ~/.claude/hooks/loop-mode exists and is unexpired, flagged
-# commands AUTO-PROCEED + get logged to ~/.claude/cleanup-needed.log instead of
-# prompting (so an unattended loop never wedges). See loop-mode-arm.sh.
+# Loop-mode: when ~/.claude/hooks/loop-mode exists and is unexpired (an
+# unattended /loop or /goal run), the gate never wedges:
+#   - an unrecognized ⚠ delete is DEFERRED (not run) and appended as JSON to
+#     ~/.claude/cleanup-needed.log for a later cleanup sweep (babysit surfaces
+#     it; /cleanup, /wrapup, /PRlaunch resolve it);
+#   - other flagged non-delete commands auto-proceed.
+# See loop-mode-arm.sh and cleanup-sweep.py.
 #   enable:  ~/.claude/hooks/loop-mode-arm.sh [minutes]   (or: touch the file)
 #   disable: rm ~/.claude/hooks/loop-mode
 # Adapted from garrytan/gstack careful/bin/check-careful.sh.
@@ -36,6 +40,7 @@ fi
 
 CMD_LOWER=$(printf '%s' "$CMD" | tr '[:upper:]' '[:lower:]')
 WARN=""
+WARN_IS_RM=false   # whether WARN came from the rm parser (deferrable cleanup)
 
 # --- rm -r handling: delegate to the parser (quote/comment/newline aware) -
 # careful-rm.py prints a plain itemized WARN when an rm -r targets anything not
@@ -54,6 +59,7 @@ if printf '%s' "$CMD" | grep -qE '(^|[;&|[:space:]])rm([[:space:]]|$)' 2>/dev/nu
   elif printf '%s' "$CMD" | grep -qE 'rm\s+(-[a-zA-Z]*r|--recursive)' 2>/dev/null; then
     WARN="This command includes a recursive delete (rm -r). Review the paths before approving."
   fi
+  [ -n "$WARN" ] && WARN_IS_RM=true
 fi
 
 # --- Other rare-but-catastrophic commands (plain-English) ----------------
@@ -100,12 +106,26 @@ if [ -z "$WARN" ]; then
 fi
 
 if loop_mode_active; then
-  TS=$(date '+%Y-%m-%d %H:%M:%S %Z' 2>/dev/null || true)
-  printf '%s\t%s\n' "$TS" "$CMD" >> "$CLEANUP_LOG" 2>/dev/null || true
+  if [ "$WARN_IS_RM" = true ]; then
+    # Unattended + a delete we don't fully recognize: DON'T run it (can't ask a
+    # human, and deletes are safe to defer). Queue it for a cleanup sweep
+    # (babysit surfaces it; wrapup/PRlaunch/cleanup resolve it) and continue.
+    NOW=$(date +%s 2>/dev/null || echo 0)
+    CWD=$(printf '%s' "$INPUT" | jq -r '.cwd // ""' 2>/dev/null || true)
+    jq -nc --argjson ts "${NOW:-0}" --arg cwd "$CWD" --arg cmd "$CMD" --arg w "$WARN" \
+      '{ts:$ts, cwd:$cwd, cmd:$cmd, reason:$w}' >> "$CLEANUP_LOG" 2>/dev/null || true
+    jq -n '{
+      systemMessage: "[careful/loop-mode] Deferred an unrecognized delete to the cleanup queue (not executed). A sweep (/cleanup, /wrapup, or /PRlaunch) will resolve it.",
+      hookSpecificOutput: {hookEventName:"PreToolUse", permissionDecision:"deny", permissionDecisionReason:"[careful] Deferred this delete to ~/.claude/cleanup-needed.log (loop-mode) — NOT executed, and that is intentional. Safe to continue; do NOT retry. It will be reviewed in a cleanup sweep."}
+    }' 2>/dev/null && exit 0
+    echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"[careful] deferred delete to cleanup queue; continue, do not retry"}}'
+    exit 0
+  fi
+  # Non-delete flagged command (force-push, DROP, …): auto-proceed + note.
   jq -n --arg cmd "$CMD" '{
-    systemMessage: "[careful/loop-mode] Auto-proceeded a flagged command (logged to ~/.claude/cleanup-needed.log).",
-    hookSpecificOutput: {hookEventName:"PreToolUse", permissionDecision:"allow", permissionDecisionReason:"[careful] loop-mode active — auto-proceeded"},
-    additionalContext: ("loop-mode auto-approved a flagged command: " + $cmd + ". Track any cleanup and surface it in your wrap-up; the running log is ~/.claude/cleanup-needed.log.")
+    systemMessage: "[careful/loop-mode] Auto-proceeded a flagged non-delete command.",
+    hookSpecificOutput: {hookEventName:"PreToolUse", permissionDecision:"allow", permissionDecisionReason:"[careful] loop-mode active — auto-proceeded (non-delete)"},
+    additionalContext: ("loop-mode auto-approved a flagged command: " + $cmd + ".")
   }' 2>/dev/null && exit 0
   echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow"}}'
   exit 0
