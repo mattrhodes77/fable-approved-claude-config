@@ -26,7 +26,8 @@ commands/deep-review.md          #    Deep Review Process v6.8 — the methodolo
 commands/wrapup.md               # 4. WRAP UP — tracker sync, GitHub sync, branch hygiene, memory, report
 commands/babysit-prs.md          # 5. AFTER — hourly self-arming sweep of open PRs until reviews drain
 hooks/pr-gate.sh                 # enforcement: blocks `gh pr create` without a valid gate marker
-hooks/check-careful.sh           # guardrail: confirmation prompt on destructive bash commands (loop-mode aware)
+hooks/check-careful.sh           # guardrail: plain-English prompt on destructive bash; silent on routine cleanup (loop-mode aware)
+hooks/careful-rm.py              # parser behind check-careful: classifies rm -r targets (quote/comment/newline aware)
 hooks/check-freeze.sh            # guardrail: hard-block edits outside a declared directory boundary
 hooks/check-worktree.sh          # guardrail: deny `git commit` in a primary clone — work in worktrees
 hooks/loop-mode-arm.sh           # helper: time-box check-careful's loop-mode so unattended /loop runs don't wedge
@@ -99,7 +100,7 @@ The interesting machinery is the **convergence rule**: every sweep fingerprints 
 
 Three deterministic guardrails. The first two are adapted from [garrytan/gstack](https://github.com/garrytan/gstack) (with a JSON-extraction bugfix — the originals' grep-based parsing missed commands containing escaped quotes, e.g. `psql -c "DROP TABLE …"` — and output modernized to the current `hookSpecificOutput` hook schema); the third is ours:
 
-- **`check-careful.sh`** — forces a confirmation prompt on destructive bash, deliberately tuned to be **rare**: `rm -rf` of real paths, true `git push --force` (`--force-with-lease` — the sanctioned safe variant — passes), SQL `DROP`/`TRUNCATE` *via an actual database client* (word-matching the whole command fires on prose in commit messages — we learned), `kubectl delete`, `docker rm -f`/`system prune`. Deletes of build artifacts (`node_modules`, `.next`, `dist`, …), Python virtualenvs (`.venv*`, incl. suffixed like `.venv-myfeature`), local test sqlite DBs (`test_*.db`/`-shm`/`-wal`), and temp paths (`/tmp/*` but not `/tmp` itself) pass silently, and the target parser is compound-command-aware (stops at `;`/`&&`/`|`). The tuning principle: a guardrail that prompts on routine commands trains you to click through, which is worse than no guardrail. Gate only what's rare *and* catastrophic.
+- **`check-careful.sh`** (+ **`careful-rm.py`**) — gates rare-but-catastrophic bash, and works hard to ask in plain English *only* when it matters. For `rm -r`, every delete target is classified by `careful-rm.py` — a real quote/comment/newline/redirection-aware parser, because a bash word-loop mis-reads all four (it parsed `rm` inside a quoted argument and `#` comments as real deletes, and leaked tokens across newlines — we hit exactly this). If **every** target is routine/regenerable — virtualenvs (incl. suffixed `.venv-*`), build/cache dirs (`node_modules`, `.next`, `dist`, `__pycache__`, `.pytest_cache`, …), local test DBs (`*test*.db`/`-shm`/`-wal`), `/tmp` paths, logs — the command is **allowed silently**. Otherwise the prompt lists each item with ✓ (routine) or ⚠ (please check) and a plain label, so a human can answer at a glance instead of decoding a regex verdict like *"recursive delete of a non-temp, non-build path."* Other gated commands stay narrow with plain-English warnings: true `git push --force` (`--force-with-lease` passes), SQL `DROP`/`TRUNCATE` *via a database client*, `kubectl delete`, `docker rm -f`/`system prune`. The principle: a guardrail that prompts on routine commands — or asks a question you can't answer — trains you to click through, which is worse than no guardrail. Gate only what's rare *and* catastrophic, and explain it.
 
   **Loop-mode** (for unattended `/loop` runs): a confirmation prompt that no one is there to answer wedges the whole loop. When `~/.claude/hooks/loop-mode` exists and is unexpired, flagged commands **auto-proceed** instead of prompting — the command runs, a line is appended to `~/.claude/cleanup-needed.log`, and a `systemMessage`/`additionalContext` note surfaces it so the agent can report pending cleanup. Arm it with [`hooks/loop-mode-arm.sh [minutes]`](hooks/loop-mode-arm.sh) (writes a self-expiring epoch; default 90 min) and re-arm each iteration; when the loop stops re-arming, it disarms after the window so a leftover file never silently poisons a later **interactive** session. The file content controls semantics: a numeric epoch expires; an empty file (`touch`) arms indefinitely until you `rm` it. `babysit-prs` arms it in Step 0c (skipped on `no-loop`). With the file absent — the default, i.e. when you're at the keyboard — it prompts exactly as before.
 - **`check-freeze.sh`** — dormant until you write a directory path to `~/.claude/hooks/freeze-dir.txt`, then **hard-blocks** any Edit/Write outside that boundary. It turns "stay in this repo" from an instruction the agent must remember into a rule the harness enforces. `rm ~/.claude/hooks/freeze-dir.txt` to unfreeze.
@@ -139,8 +140,8 @@ The effect compounds: deploy gotchas, reviewer false-positive lists, infra quirk
 
    ```bash
    mkdir -p ~/.claude/hooks
-   cp hooks/*.sh ~/.claude/hooks/
-   chmod +x ~/.claude/hooks/*.sh
+   cp hooks/*.sh hooks/*.py ~/.claude/hooks/
+   chmod +x ~/.claude/hooks/*.sh ~/.claude/hooks/*.py
    ```
 
    Then add to `~/.claude/settings.json` (merge with any existing hooks):
