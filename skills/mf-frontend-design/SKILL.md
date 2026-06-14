@@ -8,7 +8,7 @@ license: Complete terms in LICENSE.txt
 
 Build distinctive, production-grade frontend interfaces. Real working code. Exceptional aesthetics. Zero AI slop.
 
-> **Sources:** Merged from Anthropic's `frontend-design` skill (with a screenshot-verification upgrade) and Leonxlnx's `taste-skill` (MIT). Every rule from both sources is preserved.
+> **Sources:** Merged from Anthropic's `frontend-design` skill (with Reeve's screenshot-verification upgrade) and Leonxlnx's `taste-skill` (MIT). Every rule from both sources is preserved.
 
 ---
 
@@ -334,6 +334,49 @@ Implement these specific micro-animations when constructing Bento grids (e.g., R
 
 ---
 
+## 10.5. BEFORE / AFTER WALKTHROUGH
+
+When you **change existing UI** (a redesign, a mobile pass, an "improve / fix / clean up X" task), don't just verify the end state — **capture the baseline first** and ship a URL-by-URL before/after the user can scan in seconds. Reusable tooling lives in `scripts/` next to this file.
+
+### The workflow
+
+1. **Capture the TRUE baseline before you edit.** The cleanest before/after is same-environment. Run the dev server on the *unmodified* code and screenshot every target surface — *then* start editing. If you already edited, recover the baseline with `git stash` (stash your changes → capture `before/` → `git stash pop` → capture `after/`), so both sets come from one consistent capture pass.
+2. **Edit, verifying each surface as you go** (per §10). Re-screenshot into a scratch dir while iterating; only the final `after/` matters.
+3. **Build the walkthrough** from the `before/` + `after/` pair (script below) and **open it for the user** (`open walkthrough.html`). Also drop the tall `walkthrough-full.png` inline so they see it without leaving the terminal.
+
+### Capturing heavy apps (why naive screenshots hang)
+
+Real apps (framer-motion, autoplaying `<video>`, canvas/rAF loops) never reach a "stable frame", so a plain screenshot call times out, and MCP browser tools often cap at ~5s. Drive the **project's own Playwright** directly with these defenses — all baked into `scripts/capture.mjs`:
+- Inject CSS to kill animations/transitions: `*{animation:none!important;transition:none!important}`.
+- Pause every `<video>` and **neuter `requestAnimationFrame`** (`window.requestAnimationFrame = () => 0`) so the compositor goes idle.
+- Hide dev chrome (`nextjs-portal` etc.) so screenshots show the real app, not the framework's dev indicator.
+- Set `reducedMotion: 'reduce'`, a real mobile viewport (`390×844 @2x`, iPhone UA), and a generous per-shot timeout.
+- If the MCP browser is wedged ("Browser is already in use"), kill the stale Chrome for that profile and remove its `Singleton*` lock files, then relaunch.
+
+### The two scripts
+
+```bash
+# 1) capture — run from the PROJECT ROOT (so it resolves the project's Playwright)
+BASE=http://localhost:3000 OUT=/tmp/shots/before \
+SURFACES="home:/,studio:/studio,copy:/copy" PROF=mobile,desktop \
+node ~/.claude/skills/mf-frontend-design/scripts/capture.mjs
+#   …make your edits…  then capture again into OUT=/tmp/shots/after
+
+# 2) build — manifest describes surfaces + change bullets; OUT holds before/ + after/
+OUT=/tmp/shots MANIFEST=/tmp/shots/manifest.json \
+node ~/.claude/skills/mf-frontend-design/scripts/build-walkthrough.mjs
+#   → writes walkthrough.html, composites/cmp-<id>.png, walkthrough-full.png
+open /tmp/shots/walkthrough.html
+```
+
+Manifest shape (drives the page — title, accent, per-URL `changes[]`, `highlights[]`, `desktop[]` no-regression proof): see the header doc-comment in `scripts/build-walkthrough.mjs`.
+
+### Quality bar for the walkthrough itself
+
+It's a frontend artifact too — hold it to this whole skill. Off-black canvas, **one** accent, mono eyebrows/labels, hairline dividers, `before`/`after` tags, real change copy (concrete verbs, file/class names where they help), and a **"desktop — no regression"** row proving you didn't break the wide layout. No generic "Improved UI ✨" captions.
+
+---
+
 ## 11. FINAL PRE-FLIGHT CHECK
 
 Evaluate your code against this matrix before outputting. This is the **last** filter you apply to your logic.
@@ -348,6 +391,7 @@ Evaluate your code against this matrix before outputting. This is the **last** f
 - [ ] Are cards omitted in favor of spacing where possible?
 - [ ] Did you strictly isolate CPU-heavy perpetual animations in their own Client Components?
 - [ ] Did you screenshot the result and compare against §7 AI Tells?
+- [ ] If you changed existing UI: captured the baseline and shipped a §10.5 before/after walkthrough (with a desktop no-regression row)?
 - [ ] Semantic HTML, proper heading hierarchy, keyboard navigation, sufficient color contrast (4.5:1 body, 3:1 large text).
 
 ---
