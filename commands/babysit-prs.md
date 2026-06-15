@@ -287,6 +287,14 @@ Print one compact markdown table:
 Open the report with one line on the CLI bucket:
 `_CLI: quiet=<yes/no:reason> · harvested=<N> · launched=<N> · in-flight=<N>_`
 
+**GREENS block — LEAD the report with this, EVERY sweep (right after the CLI line).** Publish the merge-ready set so the owner sees what's mergeable at a glance without opening anything. A PR is GREEN when it is BOTH reviewer-CLEAN **and** `mergeable == MERGEABLE` **and** `mergeStateStatus == CLEAN` (CI green + branch up to date). Filter on the `mergeable`/`mergeStateStatus` the classifier already pulls — never call a PR green when its mss is `UNSTABLE`/`DIRTY`/`BLOCKED`/`UNKNOWN`. Bucket by the same merge-lane policy you encode below:
+- **✅ Owner's lane (merge now)** — repos/subsystems where clean PRs are the owner's to merge.
+- **⛔ Teammate's lane (green but not yours)** — clean+mergeable but owned by another lane; list so the owner knows they're ready.
+- **◽ Case-by-case** — repos where merging is always a human call (e.g. feature→develop).
+- **🔑 Stack/cohort unblockers** — green stack-roots whose merge retargets + unblocks their children; flag prominently since they gate everything stacked above them.
+
+Annotate any stack-parent green with the merge procedure (merge WITHOUT `--delete-branch` → retarget child → delete branch). If the greens set is empty this sweep, say "no greens this sweep." This block leads the report; the clean-list below is just the per-PR blurbs.
+
 **Cleanup debt (surface only — this sweep is unattended, do NOT resolve it).** The careful hook defers unrecognized `rm -r` deletes to a queue during unattended runs. Surface the count so the owner clears it when present (via `/cleanup`, `/wrapup`, or `/PRlaunch`):
 ```bash
 python3 ~/.claude/hooks/cleanup-sweep.py --count
