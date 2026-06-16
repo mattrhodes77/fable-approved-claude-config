@@ -293,6 +293,28 @@ Track `CI_FIXED_THIS_ITER` + `CI_FLAGGED_HUMAN`. A red-CI fix push counts as a f
 
 ---
 
+## Step 4.7 — Auto-rebase (DIRTY/BEHIND in-lane PRs — bringing a branch current with base is mechanical, NOT a human gate)
+
+Keeping a branch up to date with its base is **automatic** — there's no product judgment in it. So babysit OWNS it for the owner's-lane PRs; never report "needs rebase, your call." Only a genuinely *semantic* conflict (same line changed two different ways) needs a human, and the validation below catches exactly those.
+
+**Scope + budget.** Owner's-lane repos only (never a teammate's lane). Cap **3 rebases per sweep**. Re-confirm `OPEN`.
+
+**Eligibility (from Step 2's `mergeStateStatus`):** `BEHIND` (stale, no conflict) or `DIRTY`/`CONFLICTING` (conflict with base).
+
+**Procedure:**
+1. **Cheap path first:** `gh pr update-branch <pr>` (merges base in, no force-push). Succeeds for `BEHIND` and stale-but-clean `DIRTY` → done (CI re-runs). Errors "Cannot update PR branch due to conflicts" → real conflict, go to 2.
+2. **Worktree merge + union-resolve:** sibling worktree at `origin/<head>` → `git merge origin/<base> --no-edit`. On conflict, **union-strip the markers** (`<<<<<<<`/`=======`/`>>>>>>>`) from every conflicted file — correct for the overwhelmingly common case (both sides ADDED different lines in the same block: a route registration, an import/export aggregator, a model/migration registration).
+3. **HARD-VALIDATE before pushing** (the safety net that separates additive from semantic):
+   - Syntax-check every touched source file (a modify/modify conflict union-stripped → usually a syntax break → caught here).
+   - Import the app entrypoint for wiring/route/service changes.
+   - Run any touched test file, plus the nearest test dir for a touched source module that has a sibling suite.
+   - **If ANY validation fails → abort the merge, do NOT push, flag NEEDS_HUMAN "semantic rebase conflict in `<file>`".** This is the only case that needs a human.
+4. **Clean validation → commit the merge (`--no-edit`) + plain `git push`** (merge-commit, NO force — works on both merge-commit and squash flows). CI re-runs; the PR re-greens.
+
+Track `REBASED_THIS_ITER` + `REBASE_FLAGGED`. A rebase push counts as progress for Step 6. Additive→auto, semantic→flag, never ship a wrong merge.
+
+---
+
 ## Step 5 — Report
 
 Print one compact markdown table:
@@ -315,7 +337,7 @@ If any red-CI triage ran (Step 4.6), add: `_CI-triage: fixed=<N> · flagged-huma
 - **🟢 Strict-green** = reviewer-CLEAN **and** `mergeable == MERGEABLE` **and** `mss == CLEAN`.
 - **🟡 Mergeable-with-non-required-red** = reviewer-CLEAN **and** `mergeable == MERGEABLE` **and** `mss == UNSTABLE`. By GitHub semantics a failing **required** check yields `BLOCKED`, not `UNSTABLE` — so `UNSTABLE + MERGEABLE` means only **non-required** checks are red/pending (e.g. an unrelated preview-deploy check). These ARE mergeable. For each 🟡, print its failing check name(s) (`gh pr view <pr> --json statusCheckRollup`) so the owner can eyeball that it's cosmetic. **Caveat:** if a 🟡's failing check IS the CI/test workflow itself (a repo that didn't mark CI required), treat it as genuinely RED → hand to Step 4.6 / NEEDS_HUMAN, NOT 🟡.
 
-Skip entirely: `DIRTY`/`CONFLICTING` (needs rebase), `BEHIND` (re-greens when updated), `UNKNOWN` (still computing — re-poll once). Bucket BOTH tiers by your merge-lane policy (tag the UNSTABLE ones 🟡 + their failing check):
+Out of greens (handled elsewhere, not skipped): `DIRTY`/`CONFLICTING`/`BEHIND` → **auto-rebase in Step 4.7** (in-lane; mechanical, no human gate). `UNKNOWN` → still computing, re-poll once. Bucket BOTH green tiers by your merge-lane policy (tag the UNSTABLE ones 🟡 + their failing check):
 - **✅ Owner's lane (merge now)** — repos/subsystems where clean PRs are the owner's to merge.
 - **⛔ Teammate's lane (green but not yours)** — clean+mergeable but owned by another lane; list so the owner knows they're ready.
 - **◽ Case-by-case** — repos where merging is always a human call (e.g. feature→develop).
