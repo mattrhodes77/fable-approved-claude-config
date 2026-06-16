@@ -311,7 +311,11 @@ Open the report with one line on the CLI bucket:
 
 If any red-CI triage ran (Step 4.6), add: `_CI-triage: fixed=<N> · flagged-human=<N> · reran=<N>_`. Auto-fixed PRs go in the action table (`RED_CI → fixed + pushed`); flagged ones under NEEDS_HUMAN with the failing test name.
 
-**GREENS block — LEAD the report with this, EVERY sweep (right after the CLI line).** Publish the merge-ready set so the owner sees what's mergeable at a glance without opening anything. A PR is GREEN when it is BOTH reviewer-CLEAN **and** `mergeable == MERGEABLE` **and** `mergeStateStatus == CLEAN` (CI green + branch up to date). Filter on the `mergeable`/`mergeStateStatus` the classifier already pulls — never call a PR green when its mss is `UNSTABLE`/`DIRTY`/`BLOCKED`/`UNKNOWN`. Bucket by the same merge-lane policy you encode below:
+**GREENS block — LEAD the report with this, EVERY sweep (right after the CLI line).** Publish the merge-ready set so the owner sees what's mergeable at a glance without opening anything. Two green tiers (the classifier already pulls `mergeable`/`mergeStateStatus`):
+- **🟢 Strict-green** = reviewer-CLEAN **and** `mergeable == MERGEABLE` **and** `mss == CLEAN`.
+- **🟡 Mergeable-with-non-required-red** = reviewer-CLEAN **and** `mergeable == MERGEABLE` **and** `mss == UNSTABLE`. By GitHub semantics a failing **required** check yields `BLOCKED`, not `UNSTABLE` — so `UNSTABLE + MERGEABLE` means only **non-required** checks are red/pending (e.g. an unrelated preview-deploy check). These ARE mergeable. For each 🟡, print its failing check name(s) (`gh pr view <pr> --json statusCheckRollup`) so the owner can eyeball that it's cosmetic. **Caveat:** if a 🟡's failing check IS the CI/test workflow itself (a repo that didn't mark CI required), treat it as genuinely RED → hand to Step 4.6 / NEEDS_HUMAN, NOT 🟡.
+
+Skip entirely: `DIRTY`/`CONFLICTING` (needs rebase), `BEHIND` (re-greens when updated), `UNKNOWN` (still computing — re-poll once). Bucket BOTH tiers by your merge-lane policy (tag the UNSTABLE ones 🟡 + their failing check):
 - **✅ Owner's lane (merge now)** — repos/subsystems where clean PRs are the owner's to merge.
 - **⛔ Teammate's lane (green but not yours)** — clean+mergeable but owned by another lane; list so the owner knows they're ready.
 - **◽ Case-by-case** — repos where merging is always a human call (e.g. feature→develop).
