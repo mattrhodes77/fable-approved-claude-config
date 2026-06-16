@@ -271,6 +271,28 @@ Cloud bumps and CLI runs draw from **separate buckets**. Per sweep: up to **3 cl
 
 ---
 
+## Step 4.6 — Red-CI triage (otherwise-clean PRs blocked ONLY by a failing check)
+
+A PR that is reviewer-CLEAN (no actionable inline) but whose merge is blocked by a **failing CI check** never shows up in GREENS and otherwise just sits forever. This step attempts a **bounded** auto-fix for the mechanical cases and flags everything else as NEEDS_HUMAN. It NEVER guess-patches a real logic failure to make it pass — wrong-but-green is worse than red.
+
+**Scope + budget.** Only triage PRs in the owner's merge lane (the GREENS ✅-lane repos) — never a teammate's lane. Cap **2 red-CI triages per sweep** (each costs a log-pull + worktree + test run). Re-confirm `OPEN` before touching.
+
+**Eligibility (from Step 2's `mergeable`/`mergeStateStatus`):** reviewer state CLEAN, `mergeable == MERGEABLE`, and `mergeStateStatus == UNSTABLE` or `BLOCKED` (a required check is failing). **Skip `DIRTY`/`CONFLICTING`** — that's a merge conflict, a different remedy (report "needs rebase", don't CI-fix). **Skip `BEHIND`** — it re-greens when the branch updates.
+
+**Triage decision tree:**
+1. Latest CI run on the branch: `gh run list -R <owner>/<repo> --branch <head> --workflow CI --limit 1 --json databaseId,status,conclusion`.
+2. **Startup-failure / infra signature** — job `failure` in <30s with empty steps + empty `--log`, OR the check-run annotation mentions billing/spend-limit (`gh api repos/<o>/<r>/commits/<sha>/check-runs` → annotations). NOT a code bug: if transient, `gh run rerun <id> --failed` **once**; if billing, flag NEEDS_HUMAN ("CI provider spend cap — owner's billing action"). Never code-fix this.
+3. **Real test/build failure** — `gh run view <id> --log-failed`; extract the `FAILED <test>` line(s) + assertion. **Auto-fix ONLY these bounded, mechanical patterns** (fix in a worktree → VALIDATE by running the affected suite per Step 3's rule → `fix(CI #<N>): <summary>` → push):
+   - **Collection/import error** (`ModuleNotFoundError` / `ImportError` / error at collection) — fix the bad import/path.
+   - **Stale snapshot / golden** — regenerate via the test's OWN documented mechanism; confirm the diff is only the intended change.
+   - **Clock/cron flake** (asserts two time-derived values differ; passes on re-run) — freeze the clock via monkeypatch, per the repo's pattern.
+   - **Lint / format / codegen-parity gate** (linter/formatter/codegen) — run it, commit the result.
+4. **Everything else → NEEDS_HUMAN.** Real assertion failures, >1 unrelated failing test, anything needing product/logic judgment, anything you don't fully understand, or anything you **can't validate locally** (no interpreter resolves). Flag with the failing test name + a one-line reason. Do NOT patch a logic test just to turn it green.
+
+Track `CI_FIXED_THIS_ITER` + `CI_FLAGGED_HUMAN`. A red-CI fix push counts as a fix for Step 6 (→ PROGRESSING). Bounded by design: mechanical→fix, ambiguous→escalate, never thrash.
+
+---
+
 ## Step 5 — Report
 
 Print one compact markdown table:
@@ -286,6 +308,8 @@ Print one compact markdown table:
 
 Open the report with one line on the CLI bucket:
 `_CLI: quiet=<yes/no:reason> · harvested=<N> · launched=<N> · in-flight=<N>_`
+
+If any red-CI triage ran (Step 4.6), add: `_CI-triage: fixed=<N> · flagged-human=<N> · reran=<N>_`. Auto-fixed PRs go in the action table (`RED_CI → fixed + pushed`); flagged ones under NEEDS_HUMAN with the failing test name.
 
 **GREENS block — LEAD the report with this, EVERY sweep (right after the CLI line).** Publish the merge-ready set so the owner sees what's mergeable at a glance without opening anything. A PR is GREEN when it is BOTH reviewer-CLEAN **and** `mergeable == MERGEABLE` **and** `mergeStateStatus == CLEAN` (CI green + branch up to date). Filter on the `mergeable`/`mergeStateStatus` the classifier already pulls — never call a PR green when its mss is `UNSTABLE`/`DIRTY`/`BLOCKED`/`UNKNOWN`. Bucket by the same merge-lane policy you encode below:
 - **✅ Owner's lane (merge now)** — repos/subsystems where clean PRs are the owner's to merge.
