@@ -25,6 +25,7 @@ commands/PRlaunch.md             # 3. SHIP — the pipeline: 7 phases, gate orde
 commands/deep-review.md          #    Deep Review Process v6.8 — the methodology gate 1 runs
 commands/wrapup.md               # 4. WRAP UP — tracker sync, GitHub sync, branch hygiene, memory, cleanup, report
 commands/babysit-prs.md          # 5. AFTER — hourly self-arming sweep of open PRs until reviews drain
+commands/bulldozer.md            #    hourly self-arming sweep that clears EASY backlog tickets, one PR per sweep
 commands/cleanup.md              #    resolve cleanup debt — deletes the careful hook deferred during loops
 hooks/pr-gate.sh                 # enforcement: blocks `gh pr create` without a valid gate marker
 hooks/check-careful.sh           # guardrail: plain-English prompt on destructive bash; silent on routine cleanup (loop-mode aware)
