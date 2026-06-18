@@ -80,6 +80,22 @@ If $ARGUMENTS is non-empty, parse comma-separated repo names and filter the resu
 
 Skip ALL PRs where `isDraft == true`. Print the post-filter count at the top of the run.
 
+## Step 1.5 — Reconcile merged tickets → Deployed (multi-PR drift fix)
+
+Independent of the open-PR sweep below: Linear's per-PR automation leaves a multi-PR (cross-repo) ticket stuck In Progress/In Review when one of several PRs merges while a sibling is still open — the later merge often never re-fires (DEV-2756). The team merges Matt's PRs hours after the session ends, so this is the call site that actually catches it.
+
+Pull Matt's recently-merged PRs and derive their tickets:
+```bash
+gh search prs --owner MindFortressInc --author "@me" --merged \
+  "merged:>=$(date -u -v-3d +%F 2>/dev/null || date -u -d '3 days ago' +%F)" \
+  --json number,repository,title --limit 200
+```
+`--limit 200` over a 3-day window is ample for an hourly sweep, but **never silently truncate**: if the result count hits the limit, page through (raise `--limit` or narrow the window) so no merged ticket is skipped. For each, derive `DEV-NNN` — from the title's `DEV-\d+`, else `gh -R <owner>/<repo> pr view <n> --json headRefName` → first `dev-\d+` in the branch. Dedupe the ticket numbers, then hand them ALL to the shared reconciler:
+```bash
+~/.claude/hooks/reconcile-ticket.sh DEV-AAAA DEV-BBBB DEV-CCCC …
+```
+It's idempotent and conservative — advances a ticket to **Deployed** only when *every* linked PR is merged and it's in a started state below Deployed; every other case (any PR still open, already Deployed, not started) is a silent no-op, so over-including ticket numbers is harmless. It NEVER sets Done (Done stays a manual, prod-verified promotion). ⚠️ It trusts Linear's attachment set as complete (kept complete by the branch-name gate); a rare *under-linked* ticket with a still-open unattached PR could advance early — low-harm since Deployed≠Done and a human/next sweep catches it. Print a one-line `_Reconciled: DEV-XXXX,DEV-YYYY → Deployed (or: none)._` in the Step 5 report.
+
 ## Step 2 — Per PR, classify CR state
 
 Skip these BEFORE classification:
@@ -467,6 +483,8 @@ echo "{\"pending_fingerprint\":\"$FINGERPRINT\",\"no_progress_streak\":$STREAK,\
      - **STALLED** → `AUTO-STOPPED (stalled)` — "$STREAK consecutive sweeps with zero queue movement (CR likely rate-limited/down or PRs frozen). $PENDING_COUNT still pending: <list>. Paused to avoid runaway polling; re-arm with `/babysit-prs` once CR is moving again."
 
 The only ways the loop stops: the queue drains, or it freezes for `STALL_LIMIT` sweeps. A backlog that's steadily clearing at CR's 3/hr — or one Matt keeps adding to — keeps the loop alive, which is the point: truly progress the queue.
+
+**6e. NO per-sweep auto-compact (removed 2026-06-18, Matt's call).** Do NOT arm a one-shot `/compact` between sweeps. A prior version did this to bound session growth, but the compact fired between sweeps and **killed the backgrounded CR-CLI procs** (Step 4.5) before the next sweep could harvest them — silently breaking CR review on the stacked Freya PRs (the CLI is the only path that reviews them; cloud CR rejects non-default bases). The CLI supplement worked fine before the compact was introduced; it does not now coexist with it. Bound session growth instead by restarting the session manually every few days (the heartbeat cron is session-only and stops with it). If session size becomes a real problem again, make the compact **CLI-aware** (only compact when `ls /tmp/cli-*.pid` is empty) rather than unconditional — do NOT reintroduce a blind per-sweep compact.
 
 </process>
 
