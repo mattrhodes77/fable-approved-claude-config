@@ -111,6 +111,13 @@ Three deterministic guardrails. The first two are adapted from [garrytan/gstack]
 - **`check-freeze.sh`** — dormant until you write a directory path to `~/.claude/hooks/freeze-dir.txt`, then **hard-blocks** any Edit/Write outside that boundary. It turns "stay in this repo" from an instruction the agent must remember into a rule the harness enforces. `rm ~/.claude/hooks/freeze-dir.txt` to unfreeze.
 - **`check-worktree.sh`** — **denies `git commit` in a primary clone** (`.git` is a directory) and allows it in linked worktrees (`.git` is a gitfile). This is the mechanical enforcement of the worktree-per-ticket pattern that [`using-git-worktrees`](skills/using-git-worktrees/SKILL.md) teaches, and it exists for the same reason every rule here does: humans and agents work the same repos in parallel, and an agent commit in a shared primary clone can be silently clobbered or buried in reflog by a human rebase/amend/branch-rename. We lost commits this way before making it a rule — and the rule still depended on the model remembering it, so now it's a hook. It resolves the repo the commit actually targets (`git -C <path>` first, then the last `cd` in the command, then the session cwd), so compound commands and subagent cwd-drift don't slip past it. Scratch clones under `/tmp` are exempt, and you can exempt a repo deliberately: `echo /path/to/repo >> ~/.claude/hooks/worktree-exempt.txt`. Reading and exploring in a primary clone stays unrestricted — only mutation needs isolation.
 
+## Cross-cutting: tracker hygiene (Linear)
+
+Two paired hooks keep the issue tracker honest about what's actually being worked on — so status reflects reality without anyone remembering to click. Both are **opt-in via env** and **fail open**: set `LINEAR_API_KEY` (or `LINEAR_KEY_FILE`, a JSON file holding `.env.LINEAR_API_KEY`), `LINEAR_DEV_TEAM_ID`, and — for the status/assignee flip — `LINEAR_INPROGRESS_STATE_ID` + `LINEAR_ASSIGNEE_ID`; the ticket-token prefix defaults to `dev` (`LINEAR_BRANCH_PREFIX` to change it). Find the UUIDs with `get_team` / `list_issue_statuses` / `get_user` in the Linear MCP. Unconfigured — or on any missing dep, API error, or timeout — both exit 0 and never block git.
+
+- **`branch-name-gate.sh`** (PreToolUse) — on branch **creation**, requires the branch to carry the ticket's exact canonical `gitBranchName`, so the PR links and Linear's own status automation fires. No ticket token → deny (the PR would never link); token present but off-slug → deny and hand back the exact name to re-run. Put `LINEAR_SKIP=1` in the command to bypass for genuinely ticket-less branches (infra/config repos).
+- **`linear-startwork.sh`** (PostToolUse) — the other half: once that branch lands, take the ticket — flip a not-started state to In Progress and assign you if it's unassigned (never reassigns someone else's ticket, never regresses In Review/Deployed/Done). It detects creation via `checkout -b/-B`, `switch -c/-C`, bare `git branch`, **and `git worktree add … -b`** — the last is what the worktree-per-ticket pattern actually uses, so without it the ticket silently never moves (we hit exactly this).
+
 ## Cross-cutting: how we do memory
 
 Not shippable in this repo (it's wired to our internal platform), but worth describing because it changes what an agent can do across sessions. We replaced Claude Code's native file-based memory (which truncates: first ~200 lines / 25 KB of `MEMORY.md`) with **retrieval-backed memory served over MCP**:
@@ -160,7 +167,8 @@ The effect compounds: deploy gotchas, reviewer false-positive lists, infra quirk
            "hooks": [
              { "type": "command", "command": "~/.claude/hooks/pr-gate.sh", "timeout": 10 },
              { "type": "command", "command": "~/.claude/hooks/check-careful.sh", "timeout": 10 },
-             { "type": "command", "command": "~/.claude/hooks/check-worktree.sh", "timeout": 10 }
+             { "type": "command", "command": "~/.claude/hooks/check-worktree.sh", "timeout": 10 },
+             { "type": "command", "command": "~/.claude/hooks/branch-name-gate.sh", "timeout": 10 }
            ]
          },
          {
@@ -169,10 +177,20 @@ The effect compounds: deploy gotchas, reviewer false-positive lists, infra quirk
              { "type": "command", "command": "~/.claude/hooks/check-freeze.sh", "timeout": 10 }
            ]
          }
+       ],
+       "PostToolUse": [
+         {
+           "matcher": "Bash",
+           "hooks": [
+             { "type": "command", "command": "~/.claude/hooks/linear-startwork.sh", "timeout": 10 }
+           ]
+         }
        ]
      }
    }
    ```
+
+   (`branch-name-gate.sh` and `linear-startwork.sh` are the optional Linear pair below — they no-op unless you set the `LINEAR_*` env vars, so they're harmless to wire in unconfigured.)
 
 3. Adapt the stack-specific bits: the secondary reviewer command in PRlaunch phase 2 (we use the CodeRabbit CLI), the tracker references (we use ticket IDs like `XXX-123`), the infra checklists in deep-review Step 5d (written for FastAPI + Alembic + Celery + Docker — keep the categories, swap the specifics), and your team's merge policy in phase 5.
 
