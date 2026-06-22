@@ -39,14 +39,21 @@ cmd=$(jq -r '.tool_input.command // ""' <<<"$input" 2>/dev/null)
 # Escape hatch (owner-authorized): ticket-less branches.
 [[ "$cmd" == *"LINEAR_SKIP=1"* ]] && exit 0
 
+# Detect on the command STRUCTURE, not string data: commit messages
+# (`-m "…"`, `-F - <<EOF …`) and echoed text routinely contain literal
+# "git checkout -b …" that must NOT be read as a real branch creation. Drop the
+# heredoc body (everything from the first <<) and quoted spans before scanning.
+scan="${cmd%%<<*}"
+scan=$(printf '%s' "$scan" | sed -E "s/\"[^\"]*\"//g; s/'[^']*'//g")
+
 # Only act on branch CREATION verbs (same detection as linear-startwork.sh).
-newbranch=$(grep -oiE '(checkout +-[bB]|switch +-[cC]) +[^ ;&|]+' <<<"$cmd" | head -1 | awk '{print $NF}')
+newbranch=$(grep -oiE '(checkout +-[bB]|switch +-[cC]) +[^ ;&|]+' <<<"$scan" | head -1 | awk '{print $NF}')
 # `git worktree add ... -b/-B <branch>` — worktree workflow's create verb.
-if [ -z "$newbranch" ] && grep -qiE 'worktree +add' <<<"$cmd"; then
-  newbranch=$(grep -oiE ' -[bB] +[^ ;&|]+' <<<"$cmd" | head -1 | awk '{print $NF}')
+if [ -z "$newbranch" ] && grep -qiE 'worktree +add' <<<"$scan"; then
+  newbranch=$(grep -oiE ' -[bB] +[^ ;&|]+' <<<"$scan" | head -1 | awk '{print $NF}')
 fi
 if [ -z "$newbranch" ]; then
-  newbranch=$(grep -oiE 'git +branch +[^-][^ ;&|]*' <<<"$cmd" | head -1 | awk '{print $NF}')
+  newbranch=$(grep -oiE 'git +branch +[^-][^ ;&|]*' <<<"$scan" | head -1 | awk '{print $NF}')
 fi
 [ -z "$newbranch" ] && exit 0
 
