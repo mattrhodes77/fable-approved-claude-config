@@ -49,7 +49,7 @@ Hard scope: NEVER merge. NEVER start a ticket assigned to someone else. NEVER pi
 - A number = target **shipped-PR** count (default **10**). A second number = recency window in days (default **7**).
 - **`target` counts shipped PRs only.** A resolve-no-PR (a ticket the subagent finds already-fixed/drifted) advances the queue + resets the stall streak but does NOT increment `shipped` — the loop keeps draining toward the Nth *shippable* PR. The stall guard stops it when the queue is genuinely dry.
 - `no-loop` = run ONE drain pass, don't arm the heartbeat. `stop` = CronDelete the bulldozer job + delete the state file + report + exit.
-- Bare `/bulldozer` = arm the heartbeat + drain toward 10.
+- Bare `/bulldozer` = arm the heartbeat + drain toward 10. **Re-invoking after a finished (or >6h stale) batch starts a FRESH batch**: the per-batch `shipped` counter resets to 0 while the `actioned` dedup ledger carries over (already-shipped tickets are skipped, never re-PR'd).
 </arguments>
 
 <process>
@@ -65,10 +65,11 @@ Hard scope: NEVER merge. NEVER start a ticket assigned to someone else. NEVER pi
 ```bash
 jq -c . /tmp/bulldozer-state.json 2>/dev/null || echo '{"target":10,"shipped":0,"resolved_no_pr":0,"days":7,"actioned":{},"no_progress_streak":0}'
 ```
-- No file → fresh state from `$ARGUMENTS` (target/days) or defaults.
-- `last_iter_at` > 6h old → keep `actioned`/`shipped`, reset `no_progress_streak`.
+- No file → fresh state from `$ARGUMENTS` (target/days) or defaults (`shipped=0`, `actioned={}`).
 - `$ARGUMENTS == "stop"` → CronDelete the bulldozer job, `rm -f /tmp/bulldozer-state.json`, report totals, **exit**.
-- **`shipped >= target` → AUTO-STOP (target met):** CronDelete the job, report, **exit**.
+- **`actioned` is the dedup ledger** (every DEV ref ever shipped/resolved/failed); it carries across batches and is ONLY wiped by `stop`. `shipped` / `resolved_no_pr` / `no_progress_streak` are **per-batch** counters. **Ledger value conventions** (these govern whether a ticket is re-pickable): `<repo>#<PR>` = shipped → permanent skip; `resolved:<reason>` = resolved → permanent skip; `failed:<reason>` = failed ONCE → **retry-eligible** (gets exactly one more attempt on a later wake); `failedx2:<reason>` = failed twice → permanent skip, never retried again.
+- **NEW-BATCH RESET — re-invoking `/bulldozer` after a finished batch starts a FRESH drain (the common case).** If the loaded state has `shipped >= target` (a prior batch already met its target → Step 3 AUTO-STOP deleted its heartbeat, so reaching Step 0a in this state can ONLY be a fresh manual re-invocation) **OR** `last_iter_at` is > 6h old (prior batch stale/abandoned): treat this as a NEW batch → set `shipped=0`, `resolved_no_pr=0`, `no_progress_streak=0`, **KEEP `actioned` as-is** (so already-done tickets are never re-picked → no duplicate PRs), apply any new `target`/`days` from `$ARGUMENTS`, then proceed to drain. **Do NOT auto-stop at load time** — the only AUTO-STOP is in Step 3, after a *live* drain hits target.
+- **Otherwise** (recent `last_iter_at`, `shipped < target`) → RESUME the in-flight batch: keep all counters and keep draining toward `target`.
 
 **0b. Self-arm the heartbeat cron (skip if `no-loop`/`stop`).** `CronList`; if no job has `prompt == "/bulldozer"`, `CronCreate(cron: "13 * * * *", prompt: "/bulldozer", recurring: true, durable: false)`. `durable: false` = session-only → runs hourly **while the terminal is open**, dies on close (7-day auto-expire). Note the cron id in the report.
 
@@ -85,19 +86,19 @@ Dedup set of in-flight refs (skip these — already being worked; `prlaunch-ok` 
   | grep -oiE "dev-?[0-9]+" | tr 'A-Z' 'a-z' | sed 's/dev-*/dev-/' | sort -u
 ```
 
-Query your tracker for backlog tickets created in the last `days`. The dump is large — **delegate the parse to a subagent**: have it EXCLUDE every identifier in `state.actioned` + the dedup set, apply `<selection-criteria>`, and return a RANKED shortlist of the best simple candidates (identifier + repo + one-line fix + assignee). Keep that shortlist in hand for the drain loop.
+Query your tracker for backlog tickets created in the last `days`. The dump is large — **delegate the parse to a subagent**: have it EXCLUDE every identifier in `state.actioned` + the dedup set — **EXCEPT** entries whose `actioned` value starts with `failed:` (a single prior failure → retry-eligible; include these as lower-ranked retry candidates). `failedx2:` / shipped / `resolved:` entries stay excluded. Apply `<selection-criteria>`, and return a RANKED shortlist of the best simple candidates (identifier + repo + one-line fix + assignee). Keep that shortlist in hand for the drain loop.
 
 ## Step 2 — DRAIN LOOP (the core — one fresh subagent per ticket, back-to-back)
 
 Loop over the shortlist, top-ranked first:
 
 1. **Stop conditions (check before each ticket):** `shipped >= target` → done (Step 3 auto-stop, target met). No more shortlist candidates → done (queue dry this wake). A per-wake safety cap of `2 × target` subagents spawned → done (anti-runaway; the heartbeat resumes next hour).
-2. **Skip** any candidate now in `state.actioned` or the dedup set (state may have advanced).
+2. **Skip** any candidate now in the dedup set, or in `state.actioned` UNLESS its value is a single `failed:` (retry-eligible — let it through for its one retry). (State may have advanced mid-wake.)
 3. **Spawn ONE fresh subagent** (Agent tool, `subagent_type: general-purpose`) with the `<ticket-subagent-prompt>` below, parameterized for this ticket. It does the entire ticket in its own context and returns a STRICT one-line result.
 4. **Record the result** into `/tmp/bulldozer-state.json` immediately (so a crash mid-drain doesn't lose progress and the next wake dedups correctly):
    - `shipped <repo>#<PR>` → `actioned[DEV]="<repo>#<PR>"`, `shipped += 1`.
    - `resolved:<reason>` → `actioned[DEV]="resolved:<reason>"`, `resolved_no_pr += 1`.
-   - `failed:<reason>` or the subagent returned null/errored → `actioned[DEV]="failed:<reason>"` (so it's not retried forever this session), log it for the report. **Do NOT abort the loop — continue to the next ticket.** One bad ticket never kills the chain.
+   - `failed:<reason>` or the subagent returned null/errored → **escalate by prior state:** if `actioned[DEV]` already starts with `failed:` (this WAS its one retry) → set `actioned[DEV]="failedx2:<reason>"` (now permanent, never retried again); otherwise → set `actioned[DEV]="failed:<reason>"` (first failure → eligible for exactly one retry on a later wake). Log it for the report. **Do NOT abort the loop — continue to the next ticket.** One bad ticket never kills the chain.
 5. Print a one-line progress note (`DEV-NNNN → <result> | shipped <s>/<target>`) and **continue to the next ticket**.
 
 Run subagents **sequentially** (one ticket at a time) — they push branches, share the reviewer-CLI's hourly quota, and create worktrees; parallel would collide and blow the quota. (If you ever parallelize, cap at 2 and only on different repos.)
@@ -160,7 +161,7 @@ Prefer the SMALLER ticket when unsure.
 - One ticket per SUBAGENT (fresh isolated context); the orchestrator only holds one-liners + state, so it stays lean across an arbitrarily long drain.
 - A subagent that errors / returns null → record `failed`, continue. Never abort the loop on one ticket.
 - NEVER merge. NEVER reassign/start someone else's ticket. NEVER widen into an epic. NEVER stack on an unmerged base (resolve-no-PR instead).
-- NEVER re-arm the cron after AUTO-STOP — re-invoke `/bulldozer` yourself.
+- NEVER re-arm the cron after AUTO-STOP — re-invoke `/bulldozer` yourself (which starts a FRESH batch: `shipped` resets to 0, `actioned` carries over so nothing is re-PR'd).
 - Run subagents sequentially (shared reviewer-CLI quota + worktree/push collisions).
 </guardrails>
 
