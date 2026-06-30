@@ -15,6 +15,7 @@ Built and battle-tested running a multi-repo production shop with Claude Code do
 ## What's in the box
 
 ```
+skills/execute/                  # 0. ORCHESTRATE — one command, whole lifecycle: read→validate→scope→plan→build→test→ship
 skills/brainstorming/            # 1. BRAINSTORM — design before code           (obra/superpowers, MIT)
 skills/writing-plans/            #    …then write the implementation plan        (obra/superpowers, MIT)
 skills/executing-plans/          #    …then execute it with review checkpoints   (obra/superpowers, MIT)
@@ -27,6 +28,7 @@ commands/wrapup.md               # 4. WRAP UP — tracker sync, GitHub sync, bra
 commands/babysit-prs.md          # 5. AFTER — hourly self-arming sweep of open PRs until reviews drain
 commands/bulldozer.md            #    hourly self-arming sweep that clears EASY backlog tickets, one PR per sweep
 commands/cleanup.md              #    resolve cleanup debt — deletes the careful hook deferred during loops
+skills/flushdeployed/            # 6. AUDIT — is each "Deployed" ticket REALLY live? validate against main + the deploy box
 hooks/pr-gate.sh                 # enforcement: blocks `gh pr create` without a valid gate marker
 hooks/check-careful.sh           # guardrail: plain-English prompt on destructive bash; silent on routine cleanup (loop-mode aware)
 hooks/careful-rm.py              # parser behind check-careful: classifies rm -r targets (quote/comment/newline aware)
@@ -42,6 +44,10 @@ skills/…                         # + the supporting superpowers set: using-sup
 ```
 
 ---
+
+## 0. Drive it end to end — /execute
+
+[`skills/execute/SKILL.md`](skills/execute/SKILL.md) is the single front door that runs the whole lifecycle below as one disciplined pass: **read → validate against prod → scope → plan → build → test → `/PRlaunch`**. Two things make it more than a macro. First, a **validate-against-prod gate** before any code is written: the ticket's premise is a claim to verify, not trust — it checks whether the capability already exists and whether the described state is real, and **halts** if production contradicts the ticket (building the wrong thing is the most expensive bug there is). Second, an **ask-only-on-a-true-fork contract**: it runs autonomously through to the PR when the path is clear, and interrupts only for a genuine decision — one with materially different outcomes that can't be derived from the ticket, the code, or a sensible default — so it neither over-asks on trivia nor silently guesses on the choices that actually matter. It builds in an isolated worktree and hands off to PRlaunch for the quality gates; it never re-runs them itself. Everything below is what `/execute` orchestrates — and each piece still stands alone.
 
 ## 1. Brainstorm — design before code, then plan, then execute
 
@@ -97,6 +103,10 @@ A 10-step review process with empirical validation at its core — *evidence ove
 Opening a PR isn't the end: automated reviewers post findings on their own schedule, rate limits stall queues, and stacked PRs get skipped by cloud bots entirely. [`commands/babysit-prs.md`](commands/babysit-prs.md) is a **self-arming hourly sweep** of every open PR you've authored across the org: it classifies each PR's review state, applies mechanical reviewer fixes (with a hard rule that behavioral changes must pass the *actual test suite*, not just a syntax check — learned from a one-line fix that parsed clean and shipped a red suite), re-triggers stalled reviews within rate-limit budgets, and runs the reviewer's CLI in the background for stacked PRs the cloud bot refuses — but only when you're not at the keyboard, so it never burns your quota.
 
 The interesting machinery is the **convergence rule**: every sweep fingerprints the queue (PR × state × latest-bot-activity, hashed) and the loop stays armed *as long as the queue is moving* — then auto-stops in exactly two cases: drained (every PR is CLEAN or NEEDS-HUMAN) or stalled (12 frozen sweeps ≈ the bot is down). No runaway polling, no babysitting the babysitter. It never merges; the report ends with a clean-list and a "likely merge" call-out driven by a per-repo policy table you define for your team (ours is redacted — write your own).
+
+## 6. Audit shipped work — flushdeployed
+
+[`skills/flushdeployed/SKILL.md`](skills/flushdeployed/SKILL.md) (`/flushdeployed <project>`) treats a tracker's "Deployed" column as **a claim to verify, not trust** — the same stance `/execute` opens with, applied to the other end of the pipeline. Trackers auto-advance a ticket to Deployed on PR merge, but merged ≠ live: a service that ships manually can lag its merge by hours, tickets get marked Deployed when only *part* of their scope shipped, and some get reverted. It fans out one read-only validator per ticket — confirm the merge is in `main`, confirm the actual change is present (not just a merge commit, which is what catches reverts and scope-gaps), and for manually-deployed services confirm the merge is an ancestor of the live box's HEAD — then moves the truly-live to Done with an evidence note, splits partials into a Done plus a fresh Todo for the unshipped remainder, and bounces the never-shipped back to Todo. An audit you can re-run, that leaves the tracker matching reality.
 
 ---
 
