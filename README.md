@@ -29,6 +29,7 @@ commands/babysit-prs.md          # 5. AFTER — hourly self-arming sweep of open
 commands/bulldozer.md            #    hourly self-arming sweep that clears EASY backlog tickets, one PR per sweep
 commands/cleanup.md              #    resolve cleanup debt — deletes the careful hook deferred during loops
 skills/flushdeployed/            # 6. AUDIT — is each "Deployed" ticket REALLY live? validate against main + the deploy box
+skills/assign/                   # 7. STAFF — roster-driven ticket discovery + assignment for a team (local SQLite + roster)
 hooks/pr-gate.sh                 # enforcement: blocks `gh pr create` without a valid gate marker
 hooks/check-careful.sh           # guardrail: plain-English prompt on destructive bash; silent on routine cleanup (loop-mode aware)
 hooks/careful-rm.py              # parser behind check-careful: classifies rm -r targets (quote/comment/newline aware)
@@ -107,6 +108,12 @@ The interesting machinery is the **convergence rule**: every sweep fingerprints 
 ## 6. Audit shipped work — flushdeployed
 
 [`skills/flushdeployed/SKILL.md`](skills/flushdeployed/SKILL.md) (`/flushdeployed <project>`) treats a tracker's "Deployed" column as **a claim to verify, not trust** — the same stance `/execute` opens with, applied to the other end of the pipeline. Trackers auto-advance a ticket to Deployed on PR merge, but merged ≠ live: a service that ships manually can lag its merge by hours, tickets get marked Deployed when only *part* of their scope shipped, and some get reverted. It fans out one read-only validator per ticket — confirm the merge is in `main`, confirm the actual change is present (not just a merge commit, which is what catches reverts and scope-gaps), and for manually-deployed services confirm the merge is an ancestor of the live box's HEAD — then moves the truly-live to Done with an evidence note, splits partials into a Done plus a fresh Todo for the unshipped remainder, and bounces the never-shipped back to Todo. An audit you can re-run, that leaves the tracker matching reality.
+
+---
+
+## 7. Staff the backlog — assign
+
+[`skills/assign/SKILL.md`](skills/assign/SKILL.md) (`/assign <names…>`) turns "find more tickets for Alice and Bob" into verified, assigned tracker tickets. It's roster-driven: each engineer's repos, active branches, projects, and themes live in a `roster.json`, and their live ticket queue is cached locally (SQLite) so you always staff from their *current* workstream, not a guess. It mines each person's repos for well-constrained candidates, dedups against what they already own, ranks the roster by repo + project + label + theme overlap so each candidate lands in the right lane, and files the assigned tickets — up to ~15 swappable people. Ships with a sanitized [`roster.example.json`](skills/assign/roster.example.json): copy it to `roster.json` and edit. The real roster (teammate emails + IDs) and the cache are gitignored, so team data never gets committed.
 
 ---
 

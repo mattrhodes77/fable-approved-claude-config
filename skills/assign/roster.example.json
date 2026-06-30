@@ -1,0 +1,51 @@
+{
+  "_comment": "EXAMPLE roster — copy to roster.json (same directory) and edit with your real team, then run `python assign.py sync --seed`. roster.json and workstreams.db are gitignored so your real team data never gets committed. Swappable roster (up to ~15). Per person: repos[] drives the discovery pass (path + active_branch to VERIFY against); projects/labels/themes augment the auto-derived profile. Set active:false to exclude from sync/match without deleting. Get linear_user_id values from `assign.py sync --seed`.",
+  "default_team": "Engineering",
+  "members": [
+    {
+      "email": "alice@example.com",
+      "linear_user_id": "00000000-0000-0000-0000-000000000001",
+      "name": "Alice",
+      "active": true,
+      "repos": [
+        {"path": "/Users/you/code/web-frontend", "active_branch": "origin/main"},
+        {"path": "/Users/you/code/design-system", "active_branch": "origin/main"}
+      ],
+      "projects": ["Web App"],
+      "labels": ["Bug Fix", "Frontend"],
+      "themes": "Front-end lead. Component library, accessibility, SSR/streaming resilience, responsive layout bugs. Ships fast."
+    },
+    {
+      "email": "bob@example.com",
+      "linear_user_id": "00000000-0000-0000-0000-000000000002",
+      "name": "Bob",
+      "active": true,
+      "repos": [
+        {"path": "/Users/you/code/api-backend", "active_branch": "origin/develop"}
+      ],
+      "projects": ["Platform"],
+      "labels": ["Bug Fix", "Backend"],
+      "themes": "Backend hardening. Async/event-loop hygiene, data-integrity (FK, NOT-NULL, migration drift), auth and cost guards, eval rigs."
+    },
+    {
+      "email": "carol@example.com",
+      "linear_user_id": "00000000-0000-0000-0000-000000000003",
+      "name": "Carol",
+      "active": true,
+      "repos": [],
+      "projects": [],
+      "labels": [],
+      "themes": ""
+    },
+    {
+      "email": "you@example.com",
+      "linear_user_id": "00000000-0000-0000-0000-000000000099",
+      "name": "You (owner)",
+      "active": false,
+      "repos": [],
+      "projects": [],
+      "labels": [],
+      "themes": "Owner/assigner. active:false so you aren't a discovery target; flip to true to include yourself."
+    }
+  ]
+}
