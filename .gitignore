@@ -1,2 +1,7 @@
 __pycache__/
 *.pyc
+
+# assign skill: never commit a real roster (teammate PII) or the workstream cache.
+# Copy skills/assign/roster.example.json -> skills/assign/roster.json and edit locally.
+skills/assign/roster.json
+skills/assign/workstreams.db
