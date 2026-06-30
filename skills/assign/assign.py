@@ -14,10 +14,10 @@ Commands
   profile <who>             Show a person's derived workstream: top projects/labels,
                              repos, OPEN queue, and recently shipped. <who> = email,
                              display name, or substring.
-  targets <who> [who...]     Fuzzy-resolve one or more names (e.g. `john ian`) to roster
+  targets <who> [who...]     Fuzzy-resolve one or more names (e.g. `alice bob`) to roster
                              members and emit, per person, the repos+active branches,
                              projects/labels, and the OPEN queue to dedup against. This is
-                             the entry point for `/assign john ian` — it hands the
+                             the entry point for `/assign alice bob` — it hands the
                              pipeline everything it needs to mine each person's repos.
   match "<text>" [opts]      Rank roster members by fit for a candidate ticket.
         --repo PATH_OR_NAME  candidate's repo (basename match ok)
@@ -38,7 +38,7 @@ Commands
         --body-file PATH     read the markdown description from a file
         --dry-run            print the resolved payload, do not create
 
-TRIAGE (Matt's rule): run candidates through bulldozer's eligibility FIRST. A candidate
+TRIAGE (your rule): run candidates through bulldozer's eligibility FIRST. A candidate
 is bulldozer-eligible (--bulldozer) when the fix is small + mechanical + well-specified +
 unblocked + on the active branch (single-function / guard / wire-an-existing-handler /
 mirror-a-sibling). Anything needing design, a product/build-vs-remove decision, judgment,
