@@ -12,6 +12,12 @@ The centerpiece is **PRlaunch** — a pre-PR quality pipeline: three local gates
 
 Built and battle-tested running a multi-repo production shop with Claude Code doing most of the shipping. Every rule in here exists because its absence caused a real incident.
 
+## History
+
+Built over ~6 months of daily production use running [Reeve](https://meetreeve.com) — a small startup (4 devs) where Claude Code does most of the shipping across a multi-repo platform. Nothing here was designed up front: every gate, hook, and classifier was added after its absence caused a real incident, then kept only if it paid rent.
+
+The most recent overhaul is itself a story about models: with Claude Fable 5 access on the Max plan sunsetting, we pointed Fable at this config for one final pass — using the strongest model to harden the whole pipeline so a smaller one could drive it at the same quality bar. That wave produced the evidence-required review process (v6.9), the per-gate ledger a hook enforces mechanically, deterministic tested classifiers replacing prompt-time judgment, the six-section worker-brief contract, and `skillify` — repo skill libraries that hand a weaker model senior-engineer operating knowledge. The thesis of the whole repo: **put the judgment in the process, not the model.**
+
 ## What's in the box
 
 ```
@@ -46,6 +52,7 @@ hooks/model-preamble.sh          # SessionStart: inject a strict process-first p
 skills/briefs/                   # the six-section worker-brief contract every orchestrator's subagent prompt follows
 skills/skillify/                 # turn a repo's tribal knowledge into a project skill library (discover→map→author→review)
 tests/ + run-tests.sh            # the safety-hook regression suite (isolated temp-HOME sandboxes; CI-wired)
+launchd/                         # headless scheduled skills — launchd fires `claude -p` on a schedule, no open session needed
 skills/…                         # + the supporting superpowers set: using-superpowers (skill dispatch),
                                  #   using-git-worktrees, verification-before-completion,
                                  #   subagent-driven-development, finishing-a-development-branch,
