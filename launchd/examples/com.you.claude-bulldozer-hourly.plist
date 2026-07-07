@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.you.claude-bulldozer-hourly</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/zsh</string>
+        <string>/Users/you/.claude/launchd/headless-skill.sh</string>
+        <string>bulldozer</string>
+        <string>3000</string>
+        <string>/bulldozer</string>
+    </array>
+    <key>StartInterval</key>
+    <integer>3600</integer>
+    <key>StandardOutPath</key>
+    <string>/Users/you/.claude/logs/headless-bulldozer.launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/you/.claude/logs/headless-bulldozer.launchd.log</string>
+</dict>
+</plist>
