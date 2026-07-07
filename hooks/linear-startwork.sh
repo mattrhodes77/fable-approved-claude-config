@@ -1,6 +1,6 @@
 #!/bin/bash
 # linear-startwork.sh — PostToolUse hook on Bash for Claude Code.
-# When a branch carrying a Linear ticket token (e.g. `dev-1234`) is CREATED,
+# When a branch carrying a Linear ticket token (e.g. `dev-NNN`) is CREATED,
 # take the linked ticket automatically:
 #   - Flip a NOT-STARTED state (backlog/unstarted/triage) -> In Progress.
 #     Never regresses In Review/Deployed/Done — avoids the tracker-automation

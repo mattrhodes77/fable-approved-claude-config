@@ -22,6 +22,8 @@ Goal: every ticket touched this session reflects current reality.
   - Work paused mid-stream → leave a comment with current state + next step
   - Scope changed → update description or add comment
 - Add a comment summarizing this session's progress on the ticket if not obvious from PR links.
+- **Verify PR↔ticket links landed.** For each ticket with a PR this session, fetch the issue and confirm the PR URL is actually in its `attachments`/links. The branch-token / `Closes <TICKET-ID>` auto-link usually fires, but tickets are systematically under-linked — if it's missing, attach it explicitly (`save_issue` with `links: [{url, title}]`). (Work-START state — In Progress + assignment — is handled automatically by the `linear-startwork.sh` hook on branch creation; you're only reconciling the *end* state here.)
+- **Auto-reconcile multi-PR status drift.** Only after the link-verification above confirms **every** PR for the ticket is attached, run `~/.claude/hooks/reconcile-ticket.sh <TICKET-ID> [<TICKET-ID> …]` for the session's tickets. It advances a ticket to **Deployed** only when *every* linked PR is merged — fixing the multi-PR race where the tracker leaves a ticket stuck In Progress/In Review after just one of several cross-repo PRs merges (the no-op cases are silent). ⚠️ The reconciler trusts the tracker's attachment set as complete (it's the branch-name gate that keeps links complete) — so an *under-linked* ticket, where a still-open PR was never attached, could advance early; this is why link-verification must run first. Advance-only; never sets Done (Done stays a manual, prod-verified promotion).
 - If you're unsure whether a state change is warranted, ask the owner before flipping it.
 - **Follow-up work surfaced this session → file a ticket, don't just note it.** Out-of-scope review findings, deferred fixes, known gaps, "we should also…" items — if it's legitimate and won't ship this session, create an issue (batch related ones; link the source PR + `file:line` where relevant). The "Open follow-ups" report section is a summary of filed tickets, not a substitute for filing them. Out-of-scope ≠ discard.
 
@@ -107,11 +109,14 @@ git status --short
 Goal: clear delete-debt the careful hook deferred during unattended loops (it queues any unrecognized `rm -r` to `~/.claude/cleanup-needed.log` rather than wedging the loop).
 
 ```bash
-python3 ~/.claude/hooks/cleanup-sweep.py --count
+DEPTH=$(python3 ~/.claude/hooks/cleanup-sweep.py --count); echo "$DEPTH"
+# Durable record (guarded no-op if the helper is absent) — feeds a weekly scorecard:
+[ -x ~/.claude/hooks/ledger-append.sh ] && ~/.claude/hooks/ledger-append.sh \
+  "$(jq -nc --argjson n "${DEPTH:-0}" '{skill:"wrapup", event:"cleanup_depth", count:$n}')"
 ```
 
 - `0` → "Cleanup: nothing pending" in the report.
-- `>0` → run the **`/cleanup`** sweep: show the queued deletes (`cleanup-sweep.py`), confirm which to run, re-run the approved commands (you're attended, so the careful hook prompts per ⚠ item / silently allows anything now-recognized), and drop each handled entry with `cleanup-sweep.py --remove <i>` in **descending** index order. Report how many were cleared vs. left.
+- `>0` → run the **`/cleanup`** sweep: show the queued deletes (`cleanup-sweep.py`), confirm which to run, then **`cleanup-sweep.py --run <i>`** each approved entry (or `--run-all`) — it parses the actual delete targets and removes them directly. Do NOT re-run the queued `cmd` (the hook re-defers it, and some entries recreate scratch). Use `--remove <i>` only for declined entries. Report how many were cleared vs. left.
 
 ## 7. Report
 

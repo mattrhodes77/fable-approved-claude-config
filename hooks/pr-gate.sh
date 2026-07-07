@@ -1,52 +1,89 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # pr-gate.sh — PreToolUse hook on Bash for Claude Code.
-# Blocks `gh pr create` unless the PRlaunch gates passed for the EXACT current HEAD.
+# Blocks `gh pr create` unless the PRlaunch gates passed for this exact
+# repo+branch+HEAD. The evidence is a per-gate JSON ledger:
+#   ~/.claude/prlaunch-ok/<repo>--<branch-slug>.json  (written by prlaunch-gate.sh)
+# recording, per gate (deep_review/cr_cli/outcome_eval/tests), the HEAD it ran
+# against; `prlaunch-gate.sh check` requires all four present AND at current HEAD.
+# Any commit after a gate ran changes HEAD and re-blocks (re-gate rule).
+# Back-compat: a legacy plain-sha marker file (no .json suffix) that matches HEAD
+# is accepted with a migration warning while you transition to the ledger.
+# Escape hatch: include PRLAUNCH_SKIP=1 in the command (owner-authorized only).
 #
-# Mechanism: PRlaunch phase 5 writes ~/.claude/prlaunch-ok/<repo>--<branch>
-# containing the HEAD sha after all gates pass on the final tree. Any commit
-# made after that invalidates the marker (sha mismatch) — which is the
-# re-gate rule, enforced mechanically.
-#
-# Bypass (owner-authorized emergencies only): include PRLAUNCH_SKIP=1 in the command.
+# Optional tracker-link gate: the PR must attach to a ticket (branch carries
+# <prefix>-NNN, or the command body carries it, e.g. "Closes <PREFIX>-NNN").
+# The ticket-token prefix defaults to `dev` (LINEAR_BRANCH_PREFIX to change it).
+# LINEAR_SKIP=1 bypasses it for genuinely ticket-less PRs (infra/config repos).
 #
 # Install in ~/.claude/settings.json:
 #   "hooks": { "PreToolUse": [ { "matcher": "Bash", "hooks": [
 #     { "type": "command", "command": "~/.claude/hooks/pr-gate.sh", "timeout": 10 }
 #   ] } ] }
-set -euo pipefail
 
-INPUT=$(cat)
-CMD=$(printf '%s' "$INPUT" | jq -r '.tool_input.command // ""' 2>/dev/null || true)
+PREFIX="${LINEAR_BRANCH_PREFIX:-dev}"
+UPREFIX=$(printf '%s' "$PREFIX" | tr '[:lower:]' '[:upper:]')
 
-# Only gate gh pr create
-case "$CMD" in
+input=$(cat)
+cmd=$(jq -r '.tool_input.command // ""' <<<"$input")
+
+# Match only real invocations: strip quoted strings first so prose mentions
+# (commit messages, echo, grep patterns) don't trigger the gate.
+cleaned=$(sed -E "s/'[^']*'//g; s/\"[^\"]*\"//g" <<<"$cmd")
+case "$cleaned" in
   *"gh pr create"*) ;;
-  *) echo '{}'; exit 0 ;;
+  *) exit 0 ;;
 esac
 
-# Owner-authorized bypass
-case "$CMD" in
-  *"PRLAUNCH_SKIP=1"*) echo '{}'; exit 0 ;;
-esac
+[[ "$cmd" == *"PRLAUNCH_SKIP=1"* ]] && exit 0
 
-# Resolve repo + branch. If the command cd's somewhere, honor the last cd target.
-DIR=$(printf '%s' "$CMD" | grep -oE 'cd [^&;|]+' | tail -1 | sed 's/^cd //;s/[[:space:]]*$//' || true)
-DIR=${DIR:-$(pwd)}
-DIR=$(eval echo "$DIR" 2>/dev/null || printf '%s' "$DIR")
-
-REPO_ROOT=$(git -C "$DIR" rev-parse --show-toplevel 2>/dev/null || true)
-if [ -z "$REPO_ROOT" ]; then
-  echo '{}'  # not a git repo — let normal permissions handle it
+deny() {
+  jq -n --arg r "$1" '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:$r}}'
   exit 0
+}
+
+# Repo dir: explicit `cd <dir>` / `git -C <dir>` in the command wins, else hook cwd
+dir=$(jq -r '.cwd // ""' <<<"$input")
+explicit=$(grep -oE '(cd|git -C) [^ ;&|]+' <<<"$cmd" | head -1 | awk '{print $NF}')
+[[ -n "$explicit" && -d "${explicit/#\~/$HOME}" ]] && dir="${explicit/#\~/$HOME}"
+
+toplevel=$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null) \
+  || deny "PR gate: cannot resolve a git repo from '$dir'. Run gh pr create from the repo, or run /PRlaunch."
+repo=$(basename "$toplevel")
+branch=$(git -C "$dir" branch --show-current)
+head=$(git -C "$dir" rev-parse HEAD)
+slug="${branch//\//-}"
+marker="$HOME/.claude/prlaunch-ok/${repo}--${slug}"        # legacy plain-sha marker
+ledger="$HOME/.claude/prlaunch-ok/${repo}--${slug}.json"   # per-gate evidence ledger
+gate_helper="$(dirname "$0")/prlaunch-gate.sh"
+
+# Tracker link gate: the PR must attach to a ticket (branch carries <prefix>-NNN,
+# or the body/title carries the ticket id). An unlinked PR joins the under-linked
+# graveyard. LINEAR_SKIP=1 for genuinely ticket-less PRs (config/infra repos).
+if [[ "$cmd" != *"LINEAR_SKIP=1"* ]]; then
+  if ! grep -qiE "${PREFIX}-[0-9]+" <<<"$branch" && ! grep -qiE "${PREFIX}-[0-9]+" <<<"$cmd"; then
+    deny "PR BLOCKED: this PR won't link to a tracker ticket. Name the branch me/${PREFIX}-NNN-... or put 'Closes ${UPREFIX}-NNN' in the body, so the tracker auto-attaches it. (LINEAR_SKIP=1 for genuinely ticket-less PRs.)"
+  fi
 fi
 
-BRANCH=$(git -C "$REPO_ROOT" branch --show-current | tr '/' '-')
-HEAD=$(git -C "$REPO_ROOT" rev-parse HEAD)
-MARKER="$HOME/.claude/prlaunch-ok/$(basename "$REPO_ROOT")--$BRANCH"
-
-if [ -f "$MARKER" ] && [ "$(tr -d '[:space:]' < "$MARKER")" = "$HEAD" ]; then
-  echo '{}'
-  exit 0
+# Prefer the per-gate JSON ledger. When it exists it is authoritative: all four
+# PRlaunch gates must be recorded at the current HEAD. Delegate to prlaunch-gate.sh
+# `check` (it lives beside this hook) — it names the exact missing/stale gate and
+# the prescriptive fix, which we surface verbatim in the deny reason.
+if [[ -f "$ledger" ]]; then
+  if reason=$(bash "$gate_helper" check --repo-dir "$dir" 2>&1); then
+    exit 0
+  fi
+  deny "PR BLOCKED (PRlaunch ledger): $reason"
 fi
 
-printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"[pr-gate] Blocked: no PRlaunch marker for %s @ HEAD %.8s. Run the PRlaunch gates (deep-review, secondary review, outcome eval, re-gate), then write the marker in phase 5. Emergency bypass: PRLAUNCH_SKIP=1 (owner-authorized only)."}}\n' "$(basename "$REPO_ROOT")--$BRANCH" "$HEAD"
+# BACK-COMPAT: no JSON ledger, but a legacy plain-sha marker.
+# Accept only if it matches HEAD, with a migration warning; a stale marker denies.
+if [[ -f "$marker" ]]; then
+  if [[ "$(cat "$marker")" == "$head" ]]; then
+    jq -n '{systemMessage:"legacy PRlaunch marker accepted — migrate to the per-gate ledger (prlaunch-gate.sh)"}'
+    exit 0
+  fi
+  deny "PR BLOCKED: $repo/$branch changed since PRlaunch gates passed (gated $(cut -c1-8 "$marker"), HEAD ${head:0:8}). Re-run the affected gates (/PRlaunch Phase 4) — green earlier ≠ the final version is green."
+fi
+
+deny "PR BLOCKED: no PRlaunch gate record for $repo/$branch. Run /PRlaunch (deep-review → CR CLI → outcome eval → re-gate) before opening a PR."

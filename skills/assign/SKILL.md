@@ -41,13 +41,13 @@ Turns "find more tickets for <people>" into verified, assigned Linear tickets. R
    - **Bulldozer-eligible (LLM ships it)** — small + mechanical + well-specified + unblocked + on the active branch: a one-line guard, wire-an-existing-handler, mirror-a-sibling, derive-from-existing-config. → file UNASSIGNED so the `/bulldozer` heartbeat drains it.
    - **Human-needed** — anything that needs design, a build-vs-remove/product decision, judgment about intent, multi-file/cross-cutting work, a migration/CI/prod-op, or domain context the ticket can't fully specify. → step 7.
 
-7. **Match the human bucket to the best human** — `assign.py match "<title>" --repo … --project … --labels …` ranks the roster by repo + project + label + theme overlap (= ability + current workstream + repo). Assign each to the top scorer. When `/assign alice bob` named specific people, prefer them but still respect lane fit (a Studio bug → Bob even if Alice was named).
+7. **Match the human bucket to the best human** — `assign.py match "<title>" --repo … --project … --labels …` ranks the roster by repo + project + label + theme overlap (= ability + current workstream + repo). Assign each to the top scorer. When `/assign alice bob` named specific people, prefer them but still respect lane fit (a bug in Bob's lane → Bob even if Alice was named).
 
 8. **Present the routing to you for approval** — three columns: *Bulldozer (N)* / *Alice (M)* / *Bob (K)*, each row = title + file:line + 1-line fix + priority. Filing is a mutation; get the go-ahead.
 
 9. **File**, one per candidate, via the CLI (auto-resolves team/state/project/label IDs from the cache). Use `--dry-run` first.
-   - Human:  `assign.py new --assignee alice --title "[BE] …" --project Freya --priority 2 --labels "Bug Fix" --body-file BODY.md`   (→ Todo, assigned)
-   - Bulldozer: `assign.py new --bulldozer --title "[BE] …" --project Freya --priority 3 --labels "Bug Fix" --body-file BODY.md`   (→ Backlog, unassigned)
+   - Human:  `assign.py new --assignee alice --title "[BE] …" --project ProductA --priority 2 --labels "Bug Fix" --body-file BODY.md`   (→ Todo, assigned)
+   - Bulldozer: `assign.py new --bulldozer --title "[BE] …" --project ProductA --priority 3 --labels "Bug Fix" --body-file BODY.md`   (→ Backlog, unassigned)
    Body = the ticket spec: symptom, file:line evidence (as it exists on the active branch), root cause, concrete fix, reachability. Reply to you with the filed Linear URLs grouped by bucket.
 
 10. **(optional) Drain the bulldozer bucket now** — offer to run `/bulldozer <N>` so the LLM-doable tickets ship immediately instead of waiting for the hourly heartbeat. They're already filed unassigned in Backlog, so bulldozer's queue scan finds them.
@@ -83,9 +83,9 @@ Edit `roster.json` (the swappable part). Each member: `email`, `linear_user_id`,
 
 ## Conventions & gotchas (locked)
 
-- **Team = Dev**, default state **Todo**, project = the person's product (Freya / Reeve Studio / Reeve Substrate / …). All Dev-team, so moves never renumber `DEV-NNN`.
-- **Branch rules matter**: `writing-partner-backend` working tree often sits on `main` but ACTIVE dev = `origin/develop` (verify there). `writing-partner-frontend` = `origin/develop`. `reeve-frontend` / `reeve-services` = `origin/main`. The roster's `active_branch` per repo is the source of truth — pass it to every discovery agent.
-- Linear `list_issues` for 50+ tickets overflows the MCP token cap and auto-saves to a file — that's why this skill caches via the **GraphQL API** (key in `~/.reeve/reeve.json` env.LINEAR_API_KEY) instead.
+- **Team = Dev**, default state **Todo**, project = the person's product. All one team, so moves never renumber the ticket ids.
+- **Branch rules matter**: a repo's working tree often sits on `main` while ACTIVE dev happens on `origin/develop` (verify per repo). The roster's `active_branch` per repo is the source of truth — pass it to every discovery agent.
+- Linear `list_issues` for 50+ tickets overflows the MCP token cap and auto-saves to a file — that's why this skill caches via the **GraphQL API** (key from `$LINEAR_API_KEY`, or a JSON file named by `$LINEAR_KEY_FILE`) instead.
 - "Deployed" is a started-type state here but means **shipped** — the CLI treats Deployed/Done as shipped for dedup.
 - Tell discovery subagents explicitly: **read-only, no git state changes** (no checkout/pull/stash/commit).
 - `new` resolves project/state/label by NAME from the cache — if it errors "not found", run `sync` (the cache may be stale) or check spelling.
