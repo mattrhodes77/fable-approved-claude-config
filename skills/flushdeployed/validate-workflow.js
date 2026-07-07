@@ -42,7 +42,8 @@ const SCHEMA = {
 function refsBlock() {
   const lines = Object.entries(refs).map(([repo, r]) => {
     if (r.deploy === 'vercel-auto') return `- ${repo} (${r.path}): origin/main = ${r.main}. Auto-deploys to Vercel on merge → origin/main == LIVE.`
-    if (r.deploy === 'ec2-manual') return `- ${repo} (${r.path}): origin/main = ${r.main}. MANUAL deploy. LIVE box = ${r.live_box} (${r.box_date}). A change is LIVE only if its merge commit is an ANCESTOR of ${r.live_box}; in main but not ancestor = MERGED-NOT-DEPLOYED.`
+    if (r.deploy === 'ec2-manual') return `- ${repo} (${r.path}): origin/main = ${r.main}. MANUAL deploy. LIVE box = ${r.live_box} (${r.box_date}). A change is LIVE only if its merge commit is an ANCESTOR of ${r.live_box}; in main but not ancestor = MERGED-NOT-DEPLOYED. (NOTE: if live_box == origin/main HEAD, the box is fully caught up — every merged change is LIVE.)`
+    if (r.deploy === 'template') return `- ${repo} (${r.path}): origin/main = ${r.main}. TEMPLATE repo — not a deployed website. A change is "effective" (counts as shipped) once it is merged to origin/main (future instantiations consume main). Treat merged-to-main + change-present == LIVE; live basis = "on template main".`
     return `- ${repo} (${r.path}): origin/main = ${r.main}. Deploy model uncertain — report "merged to main", set live=na, do NOT over-claim LIVE.`
   })
   return `## Prod ground truth (objects ALREADY fetched; read ONLY via origin/main — DO NOT git fetch/checkout/pull or touch any working tree/index)\n${lines.join('\n')}`
@@ -54,7 +55,7 @@ function applyBlock() {
 Load write tools: ToolSearch \`select:mcp__linear__save_issue,mcp__linear__save_comment\`. Then:
 - move_to_done -> save_comment({issueId:id, body:<✅ note>}); save_issue({id, state:"${L.done}"}); action_taken="moved_to_done".
 - note_keep_deployed -> save_comment only; action_taken="noted_kept_deployed".
-- split_then_done -> save_issue({title:"[split from "+id+"] <remainder summary>", team:"${L.team}", project:"${L.project}", state:"${L.todo}", labels:["${L.label}"], parentId:id, description:<remainder>}); capture new_ticket_id; save_comment({issueId:id, body:<✂️ note referencing new_ticket_id>}); save_issue({id, state:"${L.done}"}); action_taken="split_done".
+- split_then_done -> save_issue({title:"[split from "+id+"] <remainder summary>", team:"${L.team}", project:"${L.project}", state:"${L.todo}", labels:["${L.label}"], parentId:id, description:<remainder>}); capture new_ticket_id; save_comment({issueId:id, body:<✂️ note referencing new_ticket_id>}); save_issue({id, state:"${L.done}"}); action_taken="split_done". ⚠️ CRITICAL: the FINAL save_issue Done-write targets the ORIGINAL ticket's id ONLY (the id passed into this prompt). The freshly-created remainder ticket (new_ticket_id) MUST stay in "${L.todo}" — NEVER pass new_ticket_id to a state:"${L.done}" write. Two separate tickets: original→Done, remainder→Todo.
 - note_move_to_todo -> save_comment({issueId:id, body:<⚠️ note>}); save_issue({id, state:"${L.todo}"}); action_taken="noted_todo".
 - note_only_manual -> save_comment only; action_taken="noted_manual".
 If any write throws, set action_taken="write_failed" and put the error in evidence. Idempotency: if a prior flushdeployed comment already exists on the ticket and the status already matches, do NOT duplicate — set action_taken="none".`
@@ -72,9 +73,11 @@ ${refsBlock()}
 1. Read the full ticket: ToolSearch \`select:mcp__linear__get_issue,mcp__linear__list_comments\`; get_issue({id:"${t.id}", includeRelations:true}) (description cites the intended change + evidence file:line; check linked PR attachments) and list_comments({issueId:"${t.id}"}) (PR links, prior flushdeployed notes, earlier splits). If Linear is unreachable, note it and proceed from title + git.
 2. Find the merge in prod. For each repo: git -C <repo.path> log origin/main -i --grep="${t.id}" --oneline | head -20 ; also grep the branch slug and the bare dev number. Record merge commit + PR#.
 3. Confirm the actual CHANGE is present (guard reverts/no-ops/scope-gaps): git -C <repo.path> show origin/main:<path> and/or git -C <repo.path> grep -n "<distinctive string>" origin/main -- <path>. A merge commit alone is NOT sufficient.
-4. ec2-manual repos: git -C <repo.path> merge-base --is-ancestor <merge> <live_box> && echo LIVE || echo PENDING.
+4. Liveness by deploy model of the repo the change landed in:
+   - vercel-auto / template: change present in origin/main ⇒ LIVE (no further check).
+   - ec2-manual: git -C <repo.path> merge-base --is-ancestor <merge> <live_box> && echo LIVE || echo PENDING. (If live_box == origin/main HEAD the box is caught up ⇒ any merged change is LIVE.)
 5. Verdict (CONSERVATIVE):
-   - DEPLOYED_LIVE — merge found + change present + (vercel-auto, OR ec2-manual merge ⊑ live_box).
+   - DEPLOYED_LIVE — merge found + change present + LIVE per the model (vercel-auto / template merged-to-main; OR ec2-manual merge ⊑ live_box).
    - MERGED_PENDING_DEPLOY — ec2-manual change in origin/main but NOT ancestor of live_box.
    - PARTIAL — only some described scope in prod; a concrete remainder is unshipped.
    - WRONG_NOT_DEPLOYED — use ONLY when you POSITIVELY confirmed the change is ABSENT from origin/main (inspected the cited file/path; the fix is not there / was reverted). A failed merge-search ALONE is NOT enough.

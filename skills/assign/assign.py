@@ -3,7 +3,8 @@
 assign.py — roster-driven workstream cache + ticket matcher/filer over Linear.
 
 Local-only tooling. No third-party deps (urllib + sqlite3 + json only).
-Linear API key is read from ~/.reeve/reeve.json (env.LINEAR_API_KEY) or $LINEAR_API_KEY.
+Linear API key is read from $LINEAR_API_KEY, or a JSON file named by $LINEAR_KEY_FILE
+(holding .env.LINEAR_API_KEY).
 
 Commands
   sync [--seed]              Refresh the local cache: pull each active roster member's
@@ -75,17 +76,20 @@ def linear_key():
     k = os.environ.get("LINEAR_API_KEY")
     if k:
         return k
-    try:
-        with open(os.path.expanduser("~/.reeve/reeve.json")) as f:
-            return json.load(f).get("env", {}).get("LINEAR_API_KEY")
-    except Exception:
-        return None
+    kf = os.environ.get("LINEAR_KEY_FILE")
+    if kf:
+        try:
+            with open(os.path.expanduser(kf)) as f:
+                return json.load(f).get("env", {}).get("LINEAR_API_KEY")
+        except Exception:
+            return None
+    return None
 
 
 def gql(query, variables=None):
     key = linear_key()
     if not key:
-        die("No LINEAR_API_KEY (checked $LINEAR_API_KEY and ~/.reeve/reeve.json env).")
+        die("No LINEAR_API_KEY (checked $LINEAR_API_KEY and $LINEAR_KEY_FILE).")
     body = json.dumps({"query": query, "variables": variables or {}}).encode()
     req = urllib.request.Request(
         GRAPHQL_URL,

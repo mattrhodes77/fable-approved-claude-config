@@ -1,6 +1,6 @@
-# MindFortress CC Config
+# Reeve CC Config
 
-The public [Claude Code](https://claude.com/claude-code) config we run at MindFortress. It covers the full lifecycle of a unit of work:
+The public [Claude Code](https://claude.com/claude-code) config we run building [Reeve](https://meetreeve.com). It covers the full lifecycle of a unit of work:
 
 ```
 brainstorm  →  build  →  ship (PRlaunch)  →  wrap up
@@ -8,7 +8,7 @@ brainstorm  →  build  →  ship (PRlaunch)  →  wrap up
  before code     for frontend work    before any PR exists
 ```
 
-The centerpiece is **PRlaunch** — a pre-PR quality pipeline: three local gates (a deep code review, a secondary automated review, and a live outcome eval from the user's seat) run against your working tree *before* a PR is ever opened, and a hook mechanically blocks `gh pr create` until the exact bytes you're shipping have passed every gate.
+The centerpiece is **PRlaunch** — a pre-PR quality pipeline: three local gates (a deep code review, a secondary automated review, and a live outcome eval from the user's seat) run against your working tree *before* a PR is ever opened, and a hook mechanically blocks `gh pr create` until the exact bytes you're shipping have passed every gate — each gate stamped, per-HEAD, into a tamper-evident evidence ledger.
 
 Built and battle-tested running a multi-repo production shop with Claude Code doing most of the shipping. Every rule in here exists because its absence caused a real incident.
 
@@ -23,14 +23,16 @@ skills/mf-frontend-design/       # 2. BUILD — the frontend-design skill every 
 skills/test-driven-development/  #    build-stage discipline                     (obra/superpowers, MIT)
 skills/systematic-debugging/     #    when something breaks                      (obra/superpowers, MIT)
 commands/PRlaunch.md             # 3. SHIP — the pipeline: 7 phases, gate order, disposition rules
-commands/deep-review.md          #    Deep Review Process v6.8 — the methodology gate 1 runs
+commands/deep-review.md          #    Deep Review Process v6.9 — the methodology gate 1 runs
 commands/wrapup.md               # 4. WRAP UP — tracker sync, GitHub sync, branch hygiene, memory, cleanup, report
 commands/babysit-prs.md          # 5. AFTER — hourly self-arming sweep of open PRs until reviews drain
-commands/bulldozer.md            #    hourly self-arming sweep that clears EASY backlog tickets, one PR per sweep
+skills/babysit/                  #    the deterministic, tested classifier/planner that sweep executes
+commands/bulldozer.md            #    hourly self-arming heartbeat that DRAINS easy backlog tickets, one fresh subagent per ticket
 commands/cleanup.md              #    resolve cleanup debt — deletes the careful hook deferred during loops
 skills/flushdeployed/            # 6. AUDIT — is each "Deployed" ticket REALLY live? validate against main + the deploy box
 skills/assign/                   # 7. STAFF — roster-driven ticket discovery + assignment for a team (local SQLite + roster)
-hooks/pr-gate.sh                 # enforcement: blocks `gh pr create` without a valid gate marker
+hooks/pr-gate.sh                 # enforcement: blocks `gh pr create` unless every gate is recorded at the current HEAD
+hooks/prlaunch-gate.sh           # the per-gate evidence ledger CLI the phases stamp and pr-gate verifies
 hooks/check-careful.sh           # guardrail: plain-English prompt on destructive bash; silent on routine cleanup (loop-mode aware)
 hooks/careful-rm.py              # parser behind check-careful: classifies rm -r targets (quote/comment/newline aware)
 hooks/cleanup-sweep.py           # helper: read/resolve the deferred-delete cleanup queue (used by cleanup/wrapup/PRlaunch/babysit)
@@ -38,6 +40,12 @@ hooks/check-freeze.sh            # guardrail: hard-block edits outside a declare
 hooks/check-worktree.sh          # guardrail: deny `git commit` in a primary clone — work in worktrees
 hooks/check-no-edit-on-main.sh   # guardrail: deny editing a primary clone on its default branch — work in worktrees
 hooks/loop-mode-arm.sh           # helper: time-box check-careful's loop-mode so unattended /loop runs don't wedge
+hooks/reconcile-ticket.sh        # advance a ticket to Deployed only when EVERY linked PR is merged (multi-PR race fix)
+hooks/ledger-append.sh           # append-one-validated-JSON-line automation ledger (fail-loud validator)
+hooks/model-preamble.sh          # SessionStart: inject a strict process-first preamble for weaker-than-frontier models
+skills/briefs/                   # the six-section worker-brief contract every orchestrator's subagent prompt follows
+skills/skillify/                 # turn a repo's tribal knowledge into a project skill library (discover→map→author→review)
+tests/ + run-tests.sh            # the safety-hook regression suite (isolated temp-HOME sandboxes; CI-wired)
 skills/…                         # + the supporting superpowers set: using-superpowers (skill dispatch),
                                  #   using-git-worktrees, verification-before-completion,
                                  #   subagent-driven-development, finishing-a-development-branch,
@@ -49,6 +57,12 @@ skills/…                         # + the supporting superpowers set: using-sup
 ## 0. Drive it end to end — /execute
 
 [`skills/execute/SKILL.md`](skills/execute/SKILL.md) is the single front door that runs the whole lifecycle below as one disciplined pass: **read → validate against prod → scope → plan → build → test → `/PRlaunch`**. Two things make it more than a macro. First, a **validate-against-prod gate** before any code is written: the ticket's premise is a claim to verify, not trust — it checks whether the capability already exists and whether the described state is real, and **halts** if production contradicts the ticket (building the wrong thing is the most expensive bug there is). Second, an **ask-only-on-a-true-fork contract**: it runs autonomously through to the PR when the path is clear, and interrupts only for a genuine decision — one with materially different outcomes that can't be derived from the ticket, the code, or a sensible default — so it neither over-asks on trivia nor silently guesses on the choices that actually matter. It builds in an isolated worktree and hands off to PRlaunch for the quality gates; it never re-runs them itself. Everything below is what `/execute` orchestrates — and each piece still stands alone.
+
+## 0.5 Brief the workers — briefs (and build repo knowledge — skillify)
+
+Every orchestrator here (bulldozer, babysit-prs, deep-review's finder/refuter agents, flushdeployed's validators) fans work out to fresh subagents, and worker quality is downstream of brief quality. [`skills/briefs/SKILL.md`](skills/briefs/SKILL.md) is the six-section contract every worker prompt must carry — CONTEXT / TASK / CONSTRAINTS / RETURN CONTRACT / VERIFICATION REQUIREMENT / STOP CONDITIONS — converting the judgment a strong model applies implicitly into fill-in slots a weaker worker can't silently skip, with a worked example. The load-bearing sections are the last three: a schema'd return the orchestrator can parse, evidence-before-assertion, and named bail-out conditions so a stuck worker reports instead of thrashing.
+
+[`skills/skillify/SKILL.md`](skills/skillify/SKILL.md) (`/skillify <repo>`) points the same discipline at onboarding: it mines ONE repo's ground truth (code, tests, CI, deploy scripts, memory, tracker history, prod) into a `<repo>/.claude/skills/` library — discover→map→author→review with an adversarial refute pass, per-skill required sections from [`taxonomy.md`](skills/skillify/taxonomy.md), and an acceptance test where a fresh zero-context subagent must operate the repo from the library alone. Its hard rule: a README rewritten as skills is a failure — skills carry exact invocations with expected observations, traps, decision gates, and settled failures.
 
 ## 1. Brainstorm — design before code, then plan, then execute
 
@@ -74,7 +88,7 @@ Each gate catches a bug class the others can't see:
 
 | Gate | Grades | Catches |
 |------|--------|---------|
-| **1. Deep review** ([deep-review.md](commands/deep-review.md), v6.8) | the **diff** | correctness, security, architecture — "will this overwrite the DB before the user accepts?" |
+| **1. Deep review** ([deep-review.md](commands/deep-review.md), v6.9) | the **diff** | correctness, security, architecture — "will this overwrite the DB before the user accepts?" |
 | **2. Secondary reviewer** (CodeRabbit CLI or similar) | the **repo** | style, nits, patterns |
 | **3. Outcome eval** | the **running product, from the user's seat** | the "basic stuff that always gets missed": raw `**markdown**` shown to users, an LLM that asks for context it already has, a spinner that never resolves, a layout broken at the real viewport |
 
@@ -82,9 +96,9 @@ Gate 3 is the one most teams don't have. The failure it targets isn't *not testi
 
 ### The re-gate rule
 
-**Any code change in a later gate invalidates the earlier gates.** A gate's green is only valid for the exact code it ran against. Fixed something during the eval? That fix hasn't been deep-reviewed, linted, or re-tested. The pipeline loops until a full pass over the final committed tree produces zero new changes — and the hook enforces it: the gate marker stores the HEAD sha, so any commit after the gates pass invalidates the marker automatically.
+**Any code change in a later gate invalidates the earlier gates.** A gate's green is only valid for the exact code it ran against. Fixed something during the eval? That fix hasn't been deep-reviewed, linted, or re-tested. The pipeline loops until a full pass over the final committed tree produces zero new changes — and the hook enforces it: each of the four gates (deep review, secondary review, outcome eval, tests) is stamped into a per-branch JSON ledger with the HEAD sha it ran against ([`hooks/prlaunch-gate.sh`](hooks/prlaunch-gate.sh)), and [`hooks/pr-gate.sh`](hooks/pr-gate.sh) blocks `gh pr create` unless all four are recorded at the *current* HEAD. Any commit after a gate ran stales that gate's entry automatically. The outcome eval won't even record without a pre-registered scenarios file — writing PASS criteria *before* running anything is enforced, not aspirational.
 
-### Deep Review v6.8 highlights
+### Deep Review v6.9 highlights
 
 A 10-step review process with empirical validation at its core — *evidence over opinion: a finding without proof is not a finding*. Notable machinery:
 
@@ -94,6 +108,9 @@ A 10-step review process with empirical validation at its core — *evidence ove
 - **Severity recalibration** as a standing function — review agents reliably inflate code-quality nits to HIGH; structural findings default to MEDIUM, never CRITICAL, and a missed simplification opportunity is a suggestion, never a blocker
 - **The code-judo question** (v6.8, adapted from Cursor's [thermo-nuclear-code-quality-review](https://github.com/cursor/plugins/blob/main/cursor-team-kit/skills/thermo-nuclear-code-quality-review/SKILL.md) skill): one explicit pass per review asking whether a reframing would *delete* complexity rather than rearrange it
 - **Empirical validation**: run the app, curl the endpoints, drive the UI, prove security fixes with before/after against a running instance
+- **Evidence-required findings** (v6.9): every finding carries `Evidence: <command run> → <output excerpt>` from an *executed* check — no evidence caps the finding at MEDIUM, and severity is assigned from a fixed decision table, not agent labels
+- **Adversarial refute pass** (v6.9): every CRITICAL/HIGH candidate gets independent refuter subagents briefed to *disprove* it before it can publish; refuted findings downgrade to INFO with the refutation recorded
+- **Evidence-based re-review** (v6.9): a fix is `RESOLVED` only when the original finding's evidence command re-runs clean on the new code — a diff-only check is `PARTIALLY RESOLVED (unconfirmed)`
 
 ## 4. Wrap up
 
@@ -101,9 +118,9 @@ A 10-step review process with empirical validation at its core — *evidence ove
 
 ## 5. After the PR — babysit-prs
 
-Opening a PR isn't the end: automated reviewers post findings on their own schedule, rate limits stall queues, and stacked PRs get skipped by cloud bots entirely. [`commands/babysit-prs.md`](commands/babysit-prs.md) is a **self-arming hourly sweep** of every open PR you've authored across the org: it classifies each PR's review state, applies mechanical reviewer fixes (with a hard rule that behavioral changes must pass the *actual test suite*, not just a syntax check — learned from a one-line fix that parsed clean and shipped a red suite), re-triggers stalled reviews within rate-limit budgets, and runs the reviewer's CLI in the background for stacked PRs the cloud bot refuses — but only when you're not at the keyboard, so it never burns your quota.
+Opening a PR isn't the end: automated reviewers post findings on their own schedule, rate limits stall queues, and stacked PRs get skipped by cloud bots entirely. [`commands/babysit-prs.md`](commands/babysit-prs.md) is a **self-arming hourly sweep** of every open PR you've authored across the org. As of v3, everything decidable is decided by a deterministic, regression-tested script — [`skills/babysit/babysit_classify.py`](skills/babysit/babysit_classify.py) classifies every PR, computes the merge-ready "greens" tiers, plans the bump/fix/rebase/CI-triage/CLI actions under hard caps, and owns the stall/drain decision — while the skill executes only the judgment work: applying mechanical reviewer fixes (with a hard rule that behavioral changes must pass the *actual test suite*, not just a syntax check — learned from a one-line fix that parsed clean and shipped a red suite), resolving rebase conflicts, and writing NEEDS-HUMAN prose. Every hard rule in the script patches a real past model mistake, and each is pinned by a named regression test. It re-triggers stalled reviews within rate-limit budgets and runs the reviewer's CLI in the background for stacked PRs the cloud bot refuses — but only when you're not at the keyboard, so it never burns your quota.
 
-The interesting machinery is the **convergence rule**: every sweep fingerprints the queue (PR × state × latest-bot-activity, hashed) and the loop stays armed *as long as the queue is moving* — then auto-stops in exactly two cases: drained (every PR is CLEAN or NEEDS-HUMAN) or stalled (12 frozen sweeps ≈ the bot is down). No runaway polling, no babysitting the babysitter. It never merges; the report ends with a clean-list and a "likely merge" call-out driven by a per-repo policy table you define for your team (ours is redacted — write your own).
+The interesting machinery is the **convergence rule** (also script-owned): every sweep fingerprints the queue (PR × state × latest-bot-activity, hashed) and the loop stays armed *as long as the queue is moving* — then auto-stops in exactly two cases: drained (every PR is CLEAN or NEEDS-HUMAN) or stalled (12 frozen sweeps ≈ the bot is down). Reviewer credit exhaustion is never a stop condition — consuming the hourly refill is the job. No runaway polling, no babysitting the babysitter. It never merges; the report ends with a clean-list and a "likely merge" call-out driven by a per-repo policy table you define for your team (ours is redacted — write your own).
 
 ## 6. Audit shipped work — flushdeployed
 
@@ -135,6 +152,7 @@ Four deterministic guardrails. The first two are adapted from [garrytan/gstack](
 Two paired hooks keep the issue tracker honest about what's actually being worked on — so status reflects reality without anyone remembering to click. Both are **opt-in via env** and **fail open**: set `LINEAR_API_KEY` (or `LINEAR_KEY_FILE`, a JSON file holding `.env.LINEAR_API_KEY`), `LINEAR_DEV_TEAM_ID`, and — for the status/assignee flip — `LINEAR_INPROGRESS_STATE_ID` + `LINEAR_ASSIGNEE_ID`; the ticket-token prefix defaults to `dev` (`LINEAR_BRANCH_PREFIX` to change it). Find the UUIDs with `get_team` / `list_issue_statuses` / `get_user` in the Linear MCP. Unconfigured — or on any missing dep, API error, or timeout — both exit 0 and never block git.
 
 - **`branch-name-gate.sh`** (PreToolUse) — on branch **creation**, requires the branch to carry the ticket's exact canonical `gitBranchName`, so the PR links and Linear's own status automation fires. No ticket token → deny (the PR would never link); token present but off-slug → deny and hand back the exact name to re-run. Put `LINEAR_SKIP=1` in the command to bypass for genuinely ticket-less branches (infra/config repos).
+- **`reconcile-ticket.sh`** (CLI, called by `wrapup` and `babysit-prs`) — advances a ticket to **Deployed** only when *every* linked PR is merged, fixing the multi-PR race where the tracker's per-PR automation leaves a cross-repo ticket stuck In Progress after the first sibling merges. Advance-only, never sets Done, fail-open; needs `LINEAR_DEPLOYED_STATE_ID` on top of the shared config.
 - **`linear-startwork.sh`** (PostToolUse) — the other half: once that branch lands, take the ticket — flip a not-started state to In Progress and assign you if it's unassigned (never reassigns someone else's ticket, never regresses In Review/Deployed/Done). It detects creation via `checkout -b/-B`, `switch -c/-C`, bare `git branch`, **and `git worktree add … -b`** — the last is what the worktree-per-ticket pattern actually uses, so without it the ticket silently never moves (we hit exactly this).
 
 ## Cross-cutting: how we do memory
@@ -212,7 +230,9 @@ The effect compounds: deploy gotchas, reviewer false-positive lists, infra quirk
 
    (`branch-name-gate.sh` and `linear-startwork.sh` are the optional Linear pair below — they no-op unless you set the `LINEAR_*` env vars, so they're harmless to wire in unconfigured.)
 
-3. Adapt the stack-specific bits: the secondary reviewer command in PRlaunch phase 2 (we use the CodeRabbit CLI), the tracker references (we use ticket IDs like `XXX-123`), the infra checklists in deep-review Step 5d (written for FastAPI + Alembic + Celery + Docker — keep the categories, swap the specifics), and your team's merge policy in phase 5.
+3. (Optional) Run the hook test suite — `bash run-tests.sh` — before and after adapting anything. Every test runs the real hook scripts in an isolated temp-HOME sandbox (fake `curl`/`gh` shims, throwaway git repos), so a local edit that breaks a guardrail fails loudly. `.github/workflows/tests.yml` wires the same suite into CI.
+
+4. Adapt the stack-specific bits: the secondary reviewer command in PRlaunch phase 2 (we use the CodeRabbit CLI), the tracker references (we use ticket IDs like `XXX-123`), the infra checklists in deep-review Step 5d (written for FastAPI + Alembic + Celery + Docker — keep the categories, swap the specifics), and your team's merge policy in phase 5.
 
 ## Use
 

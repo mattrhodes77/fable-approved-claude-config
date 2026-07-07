@@ -8,7 +8,7 @@ license: Complete terms in LICENSE.txt
 
 Build distinctive, production-grade frontend interfaces. Real working code. Exceptional aesthetics. Zero AI slop.
 
-> **Sources:** Merged from Anthropic's `frontend-design` skill (with Reeve's screenshot-verification upgrade) and Leonxlnx's `taste-skill` (MIT). Every rule from both sources is preserved.
+> **Sources:** Merged from Anthropic's `frontend-design` skill (with our screenshot-verification upgrade) and Leonxlnx's `taste-skill` (MIT). Every rule from both sources is preserved.
 
 ---
 

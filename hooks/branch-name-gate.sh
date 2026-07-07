@@ -3,10 +3,10 @@
 # When a branch is CREATED, require it to carry the Linear ticket's EXACT
 # canonical branch name, so the PR links AND the tracker's status automation
 # fires (and the paired linear-startwork.sh can take the ticket):
-#   - No ticket token (e.g. `dev-1234`) -> DENY, tell the agent to use the
+#   - No ticket token (e.g. `dev-NNN`) -> DENY, tell the agent to use the
 #     ticket's canonical gitBranchName (catches `quickfix`, which never links).
 #   - token present but != canonical name -> DENY, hand back the exact name to
-#     re-run with (catches `me/dev-1234-quickfix`: links, but off-slug).
+#     re-run with (catches `me/dev-NNN-quickfix`: links, but off-slug).
 #   - == canonical name (or API/config unavailable) -> ALLOW (fail-open).
 # Fires on branch CREATION only — `checkout -b/-B`, `switch -c/-C`, bare
 # `git branch <new>`, and `git worktree add ... -b/-B <branch>` — never plain

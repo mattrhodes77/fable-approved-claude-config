@@ -1,13 +1,15 @@
 ---
-description: Standardized PR review with empirical validation (Deep Review Process v6.8)
+description: Standardized PR review with empirical validation (Deep Review Process v6.9)
 argument-hint: <pr-url-or-number> [paired-pr-url-or-number]
 ---
 
-# Deep Review Process v6.8
+# Deep Review Process v6.9
 
 Standardized process for PR reviews with empirical validation. Calibrated over dozens of real reviews; the case references (PR #66, #101, #113/#80, …) are the actual incidents that produced each rule.
 
 **v6.7 → v6.8:** structural-quality lens, adapted from Cursor's `thermo-nuclear-code-quality-review` skill. Adds: file-size threshold check (Step 1), structural regression detection prompt (Step 3), structural severity calibration + the code-judo question (Step 4), anti-nit-flooding publish rule (Step 8). Core stance: **structure informs findings; it never gates merges.** A missed simplification opportunity is a suggestion, not a blocker.
+
+**v6.8 → v6.9:** evidence-required findings (no evidence ⇒ max MEDIUM), Step 3.5 adversarial refute pass on CRITICAL/HIGH, fixed severity decision table, evidence-based fix confirmation in re-review. Core stance: **review quality is model-independent — evidence and adversarial refutation replace reliance on LT judgment to recalibrate.**
 
 **Terminology:** "LT" = the lead/tech reviewer running this process (you, or the agent acting for you). Target branch examples use `develop`; substitute `main` if that's your trunk. The infra checklists reflect one real stack (FastAPI + Alembic + Celery + Docker + Vercel/Railway + Auth0/Stripe) — adapt the specifics to yours; the *categories* are the point.
 
@@ -34,6 +36,7 @@ Receive PR link(s). Identify if there are related PRs (e.g., backend + frontend 
    * Is the fix correct and complete?
    * Does it introduce new issues?
    * Mark as: RESOLVED / PARTIALLY RESOLVED / NOT ADDRESSED
+   * **Evidence-based confirmation (v6.9):** marking a finding `RESOLVED` requires **re-running the original finding's evidence command against the new code and quoting the output** (e.g., the grep now returns nothing, the endpoint now returns 401). A fix verified only by *reading the diff* is `PARTIALLY RESOLVED (unconfirmed)`, not RESOLVED.
 4. **Spot-check MEDIUM fixes** — verify a sample, not necessarily all
 5. **Scan for regressions** — new code in the fix commits could introduce new problems; run a quick security + quality pass on the delta only
    * **New findings require empirical validation** — if the delta introduces new functionality (scope expansion), any new finding must be validated with grep/code trace, not just observed from the diff. The re-review shortcut does not exempt from evidence standards.
@@ -216,6 +219,17 @@ Launch agents in parallel with calibrated prompts.
 * **LOW** — Nice to have (naming, style, minor optimizations)
 * **INFO** — Observations, no action needed
 
+### Required finding format (v6.9, include in every prompt)
+
+Every finding must carry an evidence line:
+
+> `Evidence: <command run> → <output excerpt>`
+
+The evidence must be an *executed* check — a grep hit, a `curl` response, a failing test, or a traced call path — not a claim from reading the diff. Instruct every agent:
+
+* **A finding with no executed check cannot be CRITICAL or HIGH.** Auto-cap it at MEDIUM and tag it `UNVERIFIED`.
+* An `UNVERIFIED` finding must be **verified or dropped during Step 5** (Empirical Validation) before it can be published — it never ships as-is.
+
 ### Agent types
 
 * **Security reviewer** — Vulnerabilities, auth, data exposure, input validation, OWASP
@@ -255,13 +269,46 @@ Option 1 is strongly preferred because it eliminates the failure mode entirely a
 
 ---
 
+## 3.5 Adversarial refute pass (before consolidation)
+
+For every **CRITICAL/HIGH candidate** produced in Step 3, spawn an independent **refuter** subagent whose job is to *disprove* the finding, not confirm it. Brief it:
+
+> "Here is the diff + the claimed defect. Try to prove it wrong: a guard exists upstream, the path is unreachable, the framework handles it, a test covers it. Default to REFUTED if you cannot demonstrate the failure."
+
+* **Include the diff text in the refuter prompt, not a repo pointer** — consistent with the multi-PR branch-contamination rule (Step 3, Option 1). This eliminates branch-dependency and lets refuters run in parallel.
+* **Deep tier:** 2 refuters per candidate; the finding survives only if **≤1** refutes it.
+* **Standard tier:** 1 refuter per candidate.
+* **Refuted → downgrade to INFO**, with the refutation recorded in the disposition list. A refuted finding is **never silently dropped** — the reasoning that killed it is written down.
+
+**Cost bound:** refuters run *only* on CRITICAL/HIGH candidates, typically 0–5 per PR — so this adds a bounded, small number of subagent calls, not a per-finding tax.
+
+---
+
 ## 4. Consolidation
 
 * Deduplicate findings across agents (same issue from security + quality → one finding)
 * Assign unified IDs: `B1-Bn` (backend), `F1-Fn` (frontend)
-* **Recalibrate severities** — this is a core LT function, not an occasional correction. Agents consistently inflate code quality issues (SRP violations, magic numbers, verbose mappings) to BLOCKING/HIGH. The LT must always evaluate relative severity: a DRY violation is not HIGH when the same PR has an endpoint returning 404. Recalibration happens every time, for every review.
+* **Enforce the evidence-line format** — the consolidator rejects any finding lacking `Evidence: <command run> → <output excerpt>`. A finding still tagged `UNVERIFIED` (no executed check) is capped at MEDIUM here and must be verified or dropped in Step 5 before publishing.
+* **Assign severity via the decision table below** — not free-form judgment.
 * Incorporate context from existing PR comments (don't duplicate what others found)
 * Generate consolidated document with consistent format
+
+### Severity decision table (v6.9)
+
+Severity is assigned mechanically from this table, not from agent-reported labels (agents consistently inflate code-quality issues to BLOCKING/HIGH):
+
+| Severity | Criteria |
+| -- | -- |
+| **CRITICAL** | Demonstrated (evidence) data loss, security breach, or financial impact. **Never structural.** |
+| **HIGH** | Demonstrated broken user-facing functionality, an auth/payment path defect, or a silent-corruption path with no downstream catch. |
+| **MEDIUM** | Everything real that isn't demonstrated CRITICAL/HIGH (including all default structural findings, per v6.8). |
+| **LOW / INFO** | Style, naming, missed simplification (code-judo stays INFO). |
+
+**Hard rules:**
+
+* **No evidence ⇒ max MEDIUM** (the `UNVERIFIED` cap from Step 3).
+* **A downstream catch exists ⇒ drop one level** (this absorbs principle #7, technical severity ≠ impact severity).
+* **LT judgment may move severities DOWN, never UP without evidence.** Escalating a finding above MEDIUM requires an executed check demonstrating the failure.
 
 ### Classify finding origin
 
@@ -440,6 +487,7 @@ When the owner pushes fixes, follow the **Re-review process** defined in Step 0.
 
 * Analyze only the delta (new commits since last review)
 * Verify HIGH+ findings are resolved, spot-check MEDIUMs
+* **Confirm fixes by evidence, not by reading the diff (v6.9):** `RESOLVED` requires re-running the original finding's evidence command against the new code and quoting the output; a diff-only check is `PARTIALLY RESOLVED (unconfirmed)`.
 * Scan fix commits for regressions
 * Update the existing review document (don't create a new one)
 * Decide next step:

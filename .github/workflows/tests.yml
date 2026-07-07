@@ -1,0 +1,14 @@
+name: hook-tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  tests:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run safety-hook test suite
+        run: bash run-tests.sh
