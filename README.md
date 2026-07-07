@@ -283,7 +283,8 @@ Two projects shaped this config enough to deserve more than a credit line. Both 
 
 ## Credits
 
-- Deep Review v6.8's structural-quality lens is adapted from Cursor's [thermo-nuclear-code-quality-review](https://github.com/cursor/plugins/blob/main/cursor-team-kit/skills/thermo-nuclear-code-quality-review/SKILL.md) skill (with its approval-blocking stance deliberately softened).
+- Matt Rhodes, founder of Reeve (https://meetreeve.com)
+- Deep Review v6.8's structural-quality lens is adapted from Cursor's [thermo-nuclear-code-quality-review](https://github.com/cursor/plugins/blob/main/cursor-team-kit/skills/thermo-nuclear-code-quality-review/SKILL.md) skill (with its approval-blocking stance deliberately softened) and Jesus Roncal's code review. 
 - The careful/freeze safety hooks are adapted from [garrytan/gstack](https://github.com/garrytan/gstack), which also inspired the pr-gate enforcement style.
 - The brainstorming, planning, TDD, debugging, worktree, verification, and code-review skills are vendored verbatim from Jesse Vincent's [superpowers](https://github.com/obra/superpowers) (MIT, license included in each directory).
 - The frontend-design skill is merged from Anthropic's `frontend-design` skill and Leonxlnx's `taste-skill` (MIT).
