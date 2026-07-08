@@ -220,8 +220,22 @@ query Lookups($team: String!) {
     id name
     states { nodes { id name type } }
     projects { nodes { id name } }
-    labels { nodes { id name } }
   } }
+}
+"""
+
+# Labels are fetched separately: team.labels is a single unpaginated connection that
+# silently caps at 50 AND mixes workspace-level (org-wide) labels with team labels, so
+# team-specific labels like "Bug Fix"/"New Feature" get crowded off the first page.
+# This dedicated query pulls both scopes (team=$team OR workspace/null) explicitly, and
+# is a flat top-level connection so it stays under Linear's query-complexity cap.
+LABELS_QUERY = """
+query Labels($team: String!, $after: String) {
+  issueLabels(first: 250, after: $after,
+    filter: { or: [ {team: {name: {eq: $team}}}, {team: {null: true}} ] }) {
+    nodes { id name team { name } }
+    pageInfo { hasNextPage endCursor }
+  }
 }
 """
 
@@ -239,12 +253,28 @@ def sync_lookups(conn, team_name):
         conn.execute("INSERT OR REPLACE INTO lookups VALUES ('state',?,?)", (s["name"], s["id"]))
     for p in t["projects"]["nodes"]:
         conn.execute("INSERT OR REPLACE INTO lookups VALUES ('project',?,?)", (p["name"], p["id"]))
-    for lb in t["labels"]["nodes"]:
+
+    # Labels: paginate the dedicated query, insert workspace-scoped first then team-scoped
+    # so that on a name collision (e.g. a "Bug Fix" exists in multiple teams) the label
+    # belonging to THIS team wins.
+    workspace, teamlabels = [], []
+    after = None
+    while True:
+        ld = gql(LABELS_QUERY, {"team": team_name, "after": after})
+        page = ld["issueLabels"]
+        for lb in page["nodes"]:
+            (teamlabels if (lb.get("team") and lb["team"]["name"] == team_name)
+             else workspace).append(lb)
+        if not page["pageInfo"]["hasNextPage"]:
+            break
+        after = page["pageInfo"]["endCursor"]
+    for lb in workspace + teamlabels:
         conn.execute("INSERT OR REPLACE INTO lookups VALUES ('label',?,?)", (lb["name"], lb["id"]))
+
     conn.commit()
     print(f"  cached lookups for team '{t['name']}': "
           f"{len(t['states']['nodes'])} states, {len(t['projects']['nodes'])} projects, "
-          f"{len(t['labels']['nodes'])} labels")
+          f"{len(workspace) + len(teamlabels)} labels")
 
 
 ALLMEMBERS_QUERY = """
@@ -381,6 +411,174 @@ def cmd_match(args):
         print(f"  {score:5.1f}  {r['name']:<22} {('; '.join(why)) or '(themes only)'}")
     if not any(s > 0 for s, _, _ in scored):
         print("  (no positive matches — check repo/project/label spelling or sync first)")
+    conn.close()
+
+
+# ---------- backlog (claim existing in-lane tickets before minting new) ----------
+
+# Unassigned, still-open (Backlog/Todo-type) team tickets — the pool to CLAIM from
+# before discovery mints brand-new ones. Assignee-null keeps it to genuinely
+# up-for-grabs work (tickets you own yourself are left alone unless you say otherwise).
+BACKLOG_QUERY = """
+query Backlog($team: String!, $after: String) {
+  issues(
+    filter: { team: {name: {eq: $team}}, assignee: {null: true},
+              state: {type: {in: ["backlog", "unstarted"]}} },
+    first: 100, after: $after, orderBy: updatedAt) {
+    pageInfo { hasNextPage endCursor }
+    nodes {
+      identifier title priority url
+      state { name type } project { name } labels { nodes { name } }
+    }
+  }
+}
+"""
+
+
+def fetch_unassigned_backlog(team):
+    out, after, pages = [], None, 0
+    while pages < 8:  # backstop: 800 tickets is far more than any real lane
+        data = gql(BACKLOG_QUERY, {"team": team, "after": after})
+        blk = data["issues"]
+        out.extend(blk["nodes"])
+        pages += 1
+        if not blk["pageInfo"]["hasNextPage"]:
+            break
+        after = blk["pageInfo"]["endCursor"]
+    return out
+
+
+# Cross-cutting labels that sit on nearly every ticket — they signal work TYPE, not
+# lane, so they must not inflate lane-fit (a platform-wide label alone matched almost
+# every ticket in the pool). Tune this set to your workspace's ubiquitous labels.
+CROSS_CUTTING_LABELS = {"platform", "bug fix", "new feature", "polish",
+                        "tech debt", "infra", "chore"}
+
+
+def lane_signals(conn, r):
+    """A person's current-workstream fingerprint. Projects carry a WEIGHT (how central
+    the project is to them: their #1 project = 1.0), so 'lane' is dominated by where they
+    actually work, not any project they've ever touched once."""
+    tickets = conn.execute(
+        "SELECT * FROM tickets WHERE assignee_email=?", (r["email"],)).fetchall()
+    proj_counts = Counter((t["project"] or "").lower() for t in tickets if t["project"])
+    maxc = max(proj_counts.values()) if proj_counts else 1
+    proj_weight = {p: c / maxc for p, c in proj_counts.items()}
+    for p in json.loads(r["projects_json"] or "[]"):  # roster-declared lane = full weight
+        proj_weight[p.lower()] = max(proj_weight.get(p.lower(), 0.0), 1.0)
+    labels = {l.lower() for t in tickets for l in json.loads(t["labels_json"])}
+    labels |= {l.lower() for l in json.loads(r["labels_json"] or "[]")}
+    labels -= CROSS_CUTTING_LABELS
+    kw = keywords(r["themes"]) | {w for t in tickets for w in keywords(t["title"])}
+    return {"proj_weight": proj_weight, "labels": labels, "kw": kw}
+
+
+def score_against_lane(sig, project, labels, title):
+    """Lane fit: project centrality dominates (0–3), specific product labels add a little
+    (≤2), title-keyword overlap is a weak tiebreaker (≤1). Cross-cutting labels excluded."""
+    score, why = 0.0, []
+    pw = sig["proj_weight"].get((project or "").lower(), 0.0)
+    if pw > 0:
+        score += 3 * pw
+        why.append(f"project:{project}({pw:.0%})")
+    lab_hit = ({l.lower() for l in labels} - CROSS_CUTTING_LABELS) & sig["labels"]
+    if lab_hit:
+        score += min(len(lab_hit), 2)
+        why.append("labels:" + ",".join(sorted(lab_hit)))
+    kw_hit = keywords(title) & sig["kw"]
+    if kw_hit:
+        score += 0.25 * min(len(kw_hit), 4)
+        why.append("kw:" + ",".join(sorted(list(kw_hit))[:4]))
+    return score, why
+
+
+def cmd_backlog(args):
+    """BACKLOG-FIRST: rank the existing unassigned in-lane backlog per person, so we
+    claim already-filed tickets before discovery mints new ones. A person with an empty
+    list here is the signal to fall through to the discovery sweep for that person."""
+    conn = db()
+    team = args.team
+    people, seen = [], set()
+    for who in args.who:
+        r = resolve_person(conn, who)
+        if r["email"] in seen:
+            continue
+        seen.add(r["email"]); people.append((who, r))
+    pool = fetch_unassigned_backlog(team)
+    min_score, top_n = float(args.min_score), int(args.top)
+    print(f"\nUnassigned OPEN backlog in team '{team}': {len(pool)} tickets "
+          f"(Backlog/Todo, no assignee).\nCLAIM in-lane ones below before running discovery.\n")
+    for who, r in people:
+        sig = lane_signals(conn, r)
+        scored = []
+        for t in pool:
+            s, why = score_against_lane(
+                sig, (t.get("project") or {}).get("name"),
+                [l["name"] for l in t["labels"]["nodes"]], t["title"])
+            if s >= min_score:
+                scored.append((s, t, why))
+        scored.sort(key=lambda x: (x[0], -(x[1].get("priority") or 9)), reverse=True)
+        print(f"=== {r['name']}  <{r['email']}>  (matched '{who}') ===")
+        if not scored:
+            print(f"  (no in-lane unassigned backlog scoring ≥{min_score:g} — "
+                  f"fall through to DISCOVERY for this person)\n")
+            continue
+        print(f"  {len(scored)} in-lane candidate(s); top {min(top_n, len(scored))}:")
+        for s, t, why in scored[:top_n]:
+            proj = (t.get("project") or {}).get("name") or "-"
+            print(f"  {s:5.1f}  {t['identifier']:<9} P:{PRIO.get(t.get('priority'), '?'):<6} "
+                  f"{proj:<16} {t['title']}")
+            print(f"         {t['url']}   [{'; '.join(why)}]")
+        print()
+    conn.close()
+
+
+# ---------- claim (assign an EXISTING backlog ticket to a human) ----------
+
+ISSUE_UUID_QUERY = "query($id: String!){ issue(id: $id){ id identifier assignee { name } } }"
+UPDATE_MUT = """
+mutation Claim($id: String!, $input: IssueUpdateInput!) {
+  issueUpdate(id: $id, input: $input) {
+    success issue { identifier url state { name } assignee { name } }
+  }
+}
+"""
+
+
+def cmd_claim(args):
+    """Assign an already-filed backlog ticket to a human (the backlog-first counterpart of
+    `new`: no ticket is created, an existing one is claimed and moved Backlog→Todo)."""
+    conn = db()
+    person = resolve_person(conn, args.assignee)
+    look = gql(ISSUE_UUID_QUERY, {"id": args.id})
+    iss0 = look.get("issue")
+    if not iss0:
+        die(f"issue '{args.id}' not found")
+    if iss0.get("assignee") and not args.force:
+        die(f"{iss0['identifier']} is already assigned to {iss0['assignee']['name']} "
+            f"— pass --force to reassign")
+    inp = {"assigneeId": person["linear_user_id"]}
+    state_name = args.state or "Todo"
+    if state_name.lower() != "keep":
+        sid = lookup(conn, "state", state_name)
+        if not sid:
+            die(f"state '{state_name}' not found (run sync)")
+        inp["stateId"] = sid
+    if args.priority is not None:
+        inp["priority"] = int(args.priority)
+    if args.dry_run:
+        print(f"DRY RUN issueUpdate {iss0['identifier']} -> assignee {person['name']}, "
+              f"state {state_name}"
+              + (f", priority {args.priority}" if args.priority is not None else ""))
+        conn.close()
+        return
+    data = gql(UPDATE_MUT, {"id": iss0["id"], "input": inp})
+    res = data["issueUpdate"]
+    if not res["success"]:
+        die("issueUpdate returned success=false")
+    iss = res["issue"]
+    print(f"CLAIMED {iss['identifier']} -> {iss['assignee']['name']} "
+          f"[{iss['state']['name']}]  {iss['url']}")
     conn.close()
 
 
@@ -521,6 +719,23 @@ def main():
     s = sub.add_parser("profile"); s.add_argument("who"); s.set_defaults(fn=cmd_profile)
 
     s = sub.add_parser("targets"); s.add_argument("who", nargs="+"); s.set_defaults(fn=cmd_targets)
+
+    s = sub.add_parser("backlog")
+    s.add_argument("who", nargs="+")
+    s.add_argument("--team", default="Dev")
+    s.add_argument("--min-score", dest="min_score", default="2.5",
+                   help="min lane-fit score to surface (default 2.5 ~= a strong primary-project match)")
+    s.add_argument("--top", default="15", help="max candidates to show per person")
+    s.set_defaults(fn=cmd_backlog)
+
+    s = sub.add_parser("claim")
+    s.add_argument("id", help="issue identifier to assign, e.g. ENG-1896")
+    s.add_argument("--assignee", required=True)
+    s.add_argument("--state", default="Todo", help="target state (default Todo; 'keep' to leave as-is)")
+    s.add_argument("--priority", default=None)
+    s.add_argument("--force", action="store_true", help="reassign even if already assigned")
+    s.add_argument("--dry-run", action="store_true")
+    s.set_defaults(fn=cmd_claim)
 
     s = sub.add_parser("match")
     s.add_argument("text")
