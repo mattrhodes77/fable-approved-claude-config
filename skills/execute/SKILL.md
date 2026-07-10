@@ -1,21 +1,35 @@
 ---
 name: execute
-description: Use when the owner wants ONE task or Linear ticket driven the whole way — from "execute this" / "execute EX-1234" / "take this ticket to a PR" / "build and ship this end to end" through to an opened PR — in a single disciplined pass. Triggers "/execute", "/execute DEV-NNNN", "execute this ticket", "run this end to end". For a deliberately-triggered single shippable unit; use /bulldozer for unattended multi-ticket batches and /PRlaunch alone when work is already built.
+description: Use when the owner names work to drive the whole way to opened PRs — one ticket, a pasted LIST of tickets, or a whole epic. Triggers "/execute", "/execute DEV-NNNN [DEV-NNNN …]", "execute this epic", "execute these", "take this/these to a PR", "build and ship this end to end". Multi-ticket input means ALL of them ship (one PR per ticket) — never a chosen subset. Use /bulldozer when the queue should pick its own tickets unattended; /PRlaunch alone when work is already built.
 ---
 
 # execute — read → validate → scope → plan → build → test → ship
 
-Drive a single task from request to opened PR in one pass, wiring together the substrate that already exists: validate-against-prod (the `/flushdeployed` mindset), `superpowers:writing-plans`, TDD, isolated worktrees, and `/PRlaunch`. **This skill is mostly orchestration — its job is to call the right existing skills in the right order and to know exactly when to stop and ask.**
+Drive the named work — one ticket, a pasted list of tickets, or an epic — from request to opened PR(s) in one disciplined pass, wiring together the substrate that already exists: validate-against-prod (the `/flushdeployed` mindset), `superpowers:writing-plans`, TDD, isolated worktrees, and `/PRlaunch`. **This skill is mostly orchestration — its job is to call the right existing skills in the right order and to know exactly when to stop and ask.**
 
 **Core principle — autonomous when clear, ask only on a true fork.** Once the work is scoped and planned, run all the way to `/PRlaunch` without a check-in **as long as execution is clear**. Stop ONLY for a genuine fork (defined below) or when validation/scoping is *not* clear. "No gate needed if clear execution" — the owner's standing rule. Do not invent checkpoints; do not barrel past a real fork.
 
 **Build always happens in an isolated git worktree** (`superpowers:using-git-worktrees`) on a fresh feature branch — never the live tree, never `main`.
 
-## Entry point: `/execute [DEV-NNNN | URL | free-form task]`
+## Entry point: `/execute [DEV-NNNN … | URL | epic | free-form task]`
 
-- `DEV-NNNN` or a Linear URL → fetch the issue and treat its body as the task.
-- Free-form ("execute: add X to Y") → that text is the task.
-- No argument → ask: "What's the one thing to execute?"
+The argument names the **work-list** — enumerate it before anything else:
+
+- One `DEV-NNNN` / Linear URL → one unit. Fetch the issue; its body is the task.
+- **Several tickets** (pasted list — space/comma/newline separated, or pasted bodies) → one unit PER ticket.
+- **An epic / parent ticket** → `get_issue` the parent, then its sub-issues: every open child is a unit (blocked-by order decides sequence, not membership).
+- Free-form ("execute: add X to Y") → that text is the task; if it contains several independent shippable units, decompose it — each unit gets its own ticket filed in phase 4.
+- No argument → ask what to execute.
+
+**The work-list is the owner's, verbatim.** N units in = N units executed = N branches = N PRs — every PR maps to exactly one ticket. Executing a subset the owner didn't pick is a scope violation, not a judgment call: never "pick the best one", never treat the rest as follow-ups, never collapse the list into one mega-PR.
+
+## Batch runs (work-list of 2+ units)
+
+1. **Validate first, across the whole list:** run phases 1–2 (read + premise table) for EVERY unit before building any — a contradicted premise on unit 3 shouldn't surface after units 1–2 already shipped around it.
+2. **One batched ask:** collect ALL true forks found across the list into a single `AskUserQuestion`, then build straight through with the answers in hand.
+3. **Then per unit, sequentially, in dependency order:** phases 3–8 with its own worktree, own `matt/dev-NNNN-slug` branch, own PR. If a unit hard-depends on an earlier unit's still-unmerged PR, branch off that PR's branch and mark the title "(stacked on #NNNN)".
+4. **A halted unit never kills the batch.** Contradicted premise / blocked / failed → record it, continue with the remaining units, and end with a per-unit report table: `unit → PR link / halted:<reason> / failed:<reason>`.
+5. **Long list (≳4 units):** run each unit's build phases (6–8) in a fresh subagent per the `briefs` six-section contract (bulldozer's pattern) so orchestrator context stays lean — validation and forks stay in the main session where the owner can answer.
 
 ## The pipeline
 
@@ -47,7 +61,7 @@ Rules for the table:
 **If the premise is wrong** — the capability already exists, the bug doesn't reproduce, the ticket assumes an architecture that isn't there — **HALT and report.** Do not build the wrong thing. This counts as a stop condition (treat like a fork): tell the owner what prod actually shows and what you'd do instead, and wait.
 
 ### 3. Scope
-Define the shippable unit: what's IN, what's explicitly OUT, and the success criteria ("done when…"). YAGNI ruthlessly. One `/execute` = one branch = one PR = (ideally) one ticket. If the request is really several independent subsystems, say so and propose decomposing before planning. **Stay in your lane** (rule #5): if delivering this requires changing a *different* repo, name it and stop for approval — don't hop repos.
+Define the shippable unit: what's IN, what's explicitly OUT, and the success criteria ("done when…"). YAGNI ruthlessly. One **unit** = one branch = one PR = one ticket — and one `/execute` runs EVERY unit on the work-list. If a free-form request turns out to be several independent subsystems, that's a batch, not a fork: decompose into tickets (phase 4 files them) and execute them all — don't stop to propose, and don't shrink the list. **Stay in your lane** (rule #5): if delivering a unit requires changing a *different* repo, name it and stop for approval — don't hop repos.
 
 ### 4. Plan
 Invoke `superpowers:writing-plans` to produce the implementation plan against the validated scope.
@@ -107,7 +121,8 @@ digraph execute_stop {
 
 | Phase | Action | Existing skill / tool |
 |---|---|---|
-| 1 Read | Fetch ticket / capture task | `mcp__linear__get_issue` |
+| 0 Enumerate | Build the work-list (ticket / pasted list / epic children); ALL units run | entry point + `mcp__linear__get_issue` |
+| 1 Read | Fetch ticket / capture task (per unit) | `mcp__linear__get_issue` |
 | 2 Validate | Verify premise vs prod; log the premise-evidence table; find existing | rule #6 (Linear + grep + `memory_search`), `/flushdeployed` stance |
 | 3 Scope | In/out + success criteria; stay in lane | rule #5 |
 | 4 Plan | Plan → **Linear ticket** (not local file) | `superpowers:writing-plans` + the owner's Linear-spec rule |
@@ -118,6 +133,8 @@ digraph execute_stop {
 
 ## Common mistakes
 
+- **Narrowing a batch.** The owner pastes 3 tickets or an epic → every unit ships. Picking a "preferred" ticket, deferring the rest as follow-ups, or asking which one they meant is the #1 failure of this skill — the work-list is the answer.
+- **One mega-PR for a batch.** N units = N PRs; every PR maps to exactly one ticket.
 - **Skipping phase 2.** Planning straight from the ticket builds whatever the ticket assumed — including things that already exist or bugs that aren't real. Validate first.
 - **Skipping the evidence table, or back-filling it after building.** Filling the premise table retroactively to match what you already built defeats phase 2 — the check has to precede the plan, and every row needs a command you actually ran this session.
 - **Over-asking.** Pausing for naming, file placement, or "is this OK?" on decisions with an obvious default. That's not a fork — decide and move.
