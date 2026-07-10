@@ -72,6 +72,13 @@ RATE_PHRASES = [
 NO_ACTIONABLE = "no actionable comments were generated"
 REVIEW_TRIGGERED = "review triggered"
 AUTO_DISABLED = "auto reviews are disabled"  # stacked PR -> CR-CLI target
+# CR emits these ONLY after a review actually completed. A `@coderabbitai review`
+# bump on an unchanged commit returns "Review finished / does not re-review already
+# reviewed commits" — which becomes the NEWEST comment and BURIES the original
+# "no actionable comments were generated" summary. Treat them as positive "CR
+# reviewed" signals so a reviewed-clean PR isn't mis-tagged NO_REVIEW_YET and
+# bumped forever (which only buries the verdict deeper).
+REVIEW_DONE_ACKS = ["review finished", "does not re-review already reviewed commits"]
 
 # ---- lane bucketing (Step 5 table) -----------------------------------------
 # Lane bucketing config (edit for your org):
@@ -323,19 +330,32 @@ def classify_pr(gh_bin, pr, now):
     def has_rate(t):
         return any(p in t for p in RATE_PHRASES)
 
+    # A completed "0 actionable" verdict can sit ANYWHERE in the comment history —
+    # a later bump-ack often becomes the newest comment and buries it. So scan ALL
+    # CR comments/reviews for it, not just the latest (li_body/lr_body).
+    def _body(c):
+        return (c.get("body") or "").lower()
+    any_no_actionable = (
+        any(NO_ACTIONABLE in _body(c) for c in cr_issues)
+        or any(NO_ACTIONABLE in _body(r) for r in cr_reviews)
+    )
+    # "Review finished"/incremental-skip acks prove CR reviewed even when the
+    # original summary is buried under bump-acks.
+    review_done_ack = any(any(a in _body(c) for a in REVIEW_DONE_ACKS) for c in cr_issues)
+
     # --- classify into ONE CR state (order = precedence) ---
     if actionable:
         state = "HAS_ACTIONABLE"
     elif has_rate(li_body):
         state = "RATE_LIMITED"          # credit-exhausted == rate-limited (ONE state)
-    elif NO_ACTIONABLE in li_body or NO_ACTIONABLE in lr_body:
-        state = "CLEAN"
+    elif any_no_actionable:
+        state = "CLEAN"                 # CR posted a "0 actionable" summary (scan ALL, not just newest)
     elif AUTO_DISABLED in li_body:
         state = "STACKED_BLOCKED"       # cloud rejects stacked base -> CR-CLI target
     elif REVIEW_TRIGGERED in li_body:
         state = "TRIGGERED_WAITING"
-    elif cr_inline or cr_reviews:
-        state = "CLEAN"                 # reviewed, nothing actionable outstanding
+    elif cr_inline or cr_reviews or review_done_ack:
+        state = "CLEAN"                 # reviewed, nothing actionable outstanding (ack proves review happened)
     else:
         state = "NO_REVIEW_YET"
 

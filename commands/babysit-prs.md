@@ -36,6 +36,19 @@ Hard scope: NEVER merge PRs, NEVER push --force without --force-with-lease, NEVE
 
 The queue-state file `/tmp/babysit-prs-state.json` is read AND written by `babysit_classify.py` (Step 1/4). Do NOT read or write it yourself.
 
+**0·mutex — acquire the machine-wide sweep lock FIRST, before anything else.** Two sweeps overlapping (hourly cron + the launchd plist + a second terminal / CI-fix terminal) race on the state file, the shared `~/code/<repo>` git clones, the CR-CLI pid files, and CR bumps — this is a real corruption/clobber, not a theoretical one. Run:
+```bash
+~/.claude/hooks/babysit-lock.sh acquire
+```
+- **`LOCKED …` (exit 3)** → another live sweep owns the lock. **SKIP this entire sweep** — do NOT run the classifier, do NOT execute actions. Report one line: `_Skipped — another babysit sweep is active (lock held by <owner>, age <n>s). Cron stays armed; next fire retries._` and STOP. Do NOT release a lock you don't own.
+- **`ACQUIRED …` (exit 0)** → you hold the lock for this whole sweep. You MUST call `~/.claude/hooks/babysit-lock.sh release` at the very end (Step 4, both the PROGRESSING path and the AUTO-STOP path). The lock self-reaps after a 20-min stale TTL if a sweep ever crashes, so a missed release self-heals — but always release explicitly.
+
+**0·progress — load the durable judgment store** (survives sessions/reboot, unlike the `/tmp` state file). This is how a fresh session resumes continuity instead of re-doing work:
+```bash
+~/.claude/hooks/babysit-progress.sh load        # {cli_reviewed, known_fp, merges}
+```
+Keep it in mind for Step 2: use `cli_reviewed[repo#pr].head` to decide CR-CLI re-launch (only when the head MOVED), and `known_fp` to skip re-chewing a classifier false-positive (e.g. a `fix` action whose only "actionable" comment is a CR ack-reply). Update it as you act (helpers below).
+
 **0a. Silent auto-arm of the hourly cron.** Call `CronList`; if no recurring job has `prompt == "/babysit-prs"`, call `CronCreate` with `cron: "7 * * * *"`, `prompt: "/babysit-prs"`, `recurring: true`. Note in the report's opening line: "_Auto-armed hourly cron `<id>` — stays alive while the queue has pending work; auto-stops only when drained (or stalled)._"
 
 Opt-out: if `$ARGUMENTS` is the literal `no-loop`, skip 0a/0b — the one-shot escape hatch. Any other arg is the repo filter (passed to the script as `--repos`). Plain `/babysit-prs` always arms.
@@ -72,11 +85,17 @@ Print `_Reconciled: <list> → Deployed (or: none)._` in Step 3.
 
 For EACH action: **re-confirm the PR is still OPEN first** (`gh -R <your-org>/<repo> pr view <pr> --json state -q .state` → must be `OPEN`; RETRY on empty ≥4× ~1.5s — an empty response is a transient throttle, NOT a closed PR; only a non-empty `MERGED`/`CLOSED` means dropped-off). Teammates merge in bursts mid-sweep. Run OPEN/bump loops inside an explicit `bash -c '...'` (zsh does NOT word-split unquoted `$var`). Then dispatch by `type`:
 
+**GIT-SAFETY (applies to EVERY destructive git op below — fix/rebase/ci_triage/cli worktrees).** The mutex (Step 0) stops a second *babysit* sweep, but a human/CI-fix terminal doing git in the same repo is NOT locked out — so babysit must never clobber shared work:
+- **Before any `git reset --hard` / `git clean -fd` on a worktree, check it's not in use:** `git -C "$wt" status --porcelain` — if it prints ANY line (uncommitted/untracked changes), a human or CI-fix terminal may own that worktree → **SKIP that worktree, do NOT reset/clean it**, and flag it in the report (`worktree <wt> dirty — skipped, may be in use`). Only reset a clean worktree.
+- **Retry on `index.lock` contention:** any `git fetch` / index-touching op in a shared `~/code/<repo>` clone can collide with a concurrent terminal (`fatal: Unable to create '.git/index.lock': File exists`). Wrap in a retry: up to 3 attempts, ~2s backoff; if still locked after 3, SKIP that op this sweep (do NOT delete another process's `index.lock`) and note it — next sweep retries.
+- Babysit's CR-CLI worktrees stay under `/private/tmp/*-cli` (babysit-private paths); never point a destructive op at a `~/code` primary clone's working tree.
+
 ### `bump` — post `@coderabbitai review`
 `gh -R <your-org>/<repo> pr comment <pr> --body "@coderabbitai review"`. This spends the hour's CR credit refill; the script already capped it at 3 and rotated oldest-first. A bump is progress.
 
 ### `fix` — apply the CR's actionable inline findings (HAS_ACTIONABLE rules, VERBATIM)
-1. Find/create the worktree: `git worktree list`; if the branch isn't checked out, create a sibling at `/tmp/<repo>-<branch-short>`. Symlink `node_modules` from the main checkout.
+0. **False-positive short-circuit (check FIRST — the classifier's HAS_ACTIONABLE can trip on a CR ack-reply).** If `~/.claude/hooks/babysit-progress.sh is-fp <repo>#<pr>` exits 0, this PR is a known FP — skip with that reason, no worktree. Otherwise inspect the CR comments newer than the last push: if the ONLY one(s) carry a `review_comment_addressed` marker / are a CR acknowledgement reply with **no "Prompt for AI Agents" block** (no real finding), it's a false-positive — skip it AND record it so future sweeps don't re-chew it: `~/.claude/hooks/babysit-progress.sh add-fp <repo>#<pr> "CR ack-reply only, no AI-prompt finding"`. (If a genuine new finding later lands, `clear-fp` it.)
+1. Find/create the worktree: `git worktree list`; if the branch isn't checked out, create a sibling at `/tmp/<repo>-<branch-short>`. Symlink `node_modules` from the main checkout. (Obey GIT-SAFETY: never reset/clean a dirty worktree.)
 2. Apply the CR's suggested fix EXACTLY when it's **mechanical** (regex, min/max bound, missing validation). If it needs architectural judgment ("refactor X to Y", "rename Z") → skip, flag NEEDS_HUMAN.
 3. **`ast.parse` is syntax-only; it does NOT catch a behavioral break.** If the fix changes runtime behavior of source-under-test you MUST run the affected suite:
    - TS: `npx tsc --noEmit` must pass.
@@ -101,14 +120,14 @@ NEVER guess-patch a logic failure to make it pass — wrong-but-green is worse t
 
 ### `cli_launch` — CR-CLI on cloud-rejected stacked PRs (Step 4.5, only when `quiet` starts `yes:`)
 The script only emits `cli_launch` actions when `quiet` is `yes:...` and the PR is a stacked base with 0 inline — you do NOT re-derive targets. The CLI is a SEPARATE ~3/hr quota from cloud.
-- **HARVEST first** (every sweep, regardless of quiet): for each `/tmp/cli-*.pid` whose PID is dead and whose `/tmp/cli-*.out.json` has a `{"type":"complete"}` line — re-check OPEN, parse `jq -c 'select(.type=="finding")'`, apply mechanical fixes per the `fix` rules (sibling `/tmp/<repo>-<branch>-cli` worktree), commit `fix(CR CLI #<N>)`, push, and post a `## 🤖 CodeRabbit CLI review (local)` findings comment (never on a MERGED/CLOSED PR). Read `repo`/`pr`/`branch`/`base` from the `/tmp/cli-<id>.meta` sidecar. Clean up pid/out on done; kill+discard runs older than 15 min.
-- **LAUNCH** each `cli_launch` action (up to the 3 already in the plan, minus in-flight): confirm OPEN, write a `.meta` sidecar (`repo=`/`pr=`/`branch=`/`base=`/`started=`), then background `( cd "$wt" && coderabbit review --agent --base-commit "$(git -C "$wt" merge-base HEAD origin/<base>)" > "$out" 2>&1 ) &`, record `$!` in `/tmp/cli-<id>.pid`, `disown`. A launch that errors `"errorType":"rate_limit"` → clean up silently and move on. `"errorType":"auth"` → note "run `coderabbit auth login`", skip CLI this sweep. Effects land in the NEXT sweep's harvest.
+- **HARVEST first** (every sweep, regardless of quiet): for each `/tmp/cli-*.pid` whose PID is dead and whose `/tmp/cli-*.out.json` has a `{"type":"complete"}` line — re-check OPEN, parse `jq -c 'select(.type=="finding")'`, apply mechanical fixes per the `fix` rules (sibling `/tmp/<repo>-<branch>-cli` worktree), commit `fix(CR CLI #<N>)`, push, and post a `## 🤖 CodeRabbit CLI review (local)` findings comment (never on a MERGED/CLOSED PR). Read `repo`/`pr`/`branch`/`base` from the `/tmp/cli-<id>.meta` sidecar. **On a completed harvest, record the reviewed head so the next sweep won't redundantly re-review it:** `~/.claude/hooks/babysit-progress.sh set-cli-head <repo>#<pr> <the-head-sha-the-review-covered>`. Clean up pid/out on done; kill+discard runs older than 15 min.
+- **LAUNCH** each `cli_launch` action (up to the 3 already in the plan, minus in-flight): **first, re-launch ONLY when there's new code to review** — compare the current `origin/<head>` short-sha against `~/.claude/hooks/babysit-progress.sh cli-head <repo>#<pr>` (the head the last CLI review covered, durable across sessions). If they MATCH, skip the launch (re-reviewing byte-identical code just re-posts the same flagged findings and burns the ~3/hr quota) — note `CLI held — head unchanged since last review`. If they DIFFER (author pushed) or there's no record → proceed. Then confirm OPEN, reset the babysit-private worktree to the new head (obey GIT-SAFETY: skip if dirty), write a `.meta` sidecar (`repo=`/`pr=`/`branch=`/`base=`/`started=`), then background `( cd "$wt" && coderabbit review --agent --base-commit "$(git -C "$wt" merge-base HEAD origin/<base>)" > "$out" 2>&1 ) &`, record `$!` in `/tmp/cli-<id>.pid`, `disown`. A launch that errors `"errorType":"rate_limit"` → clean up silently and move on (do NOT record a head — nothing was reviewed; next sweep retries). `"errorType":"auth"` → note "run `coderabbit auth login`", skip CLI this sweep. Effects land in the NEXT sweep's harvest.
 
 **Budget note:** cloud bumps and CLI launches draw from separate buckets — a quiet sweep can advance up to 3+3 PRs. Watch the clock: each sweep should finish <10 min; if you hit walls, report and let the next hourly sweep continue.
 
 ## Step 3 — Report
 
-Open with the auto-arm line, then `_CLI: quiet=<quiet> · harvested=<N> · launched=<N> · in-flight=<N>_` and (if any triaged) `_CI-triage: fixed=<N> · flagged-human=<N> · reran=<N>_` and `_Reconciled: <list>._`.
+Open with the auto-arm line, then `_CLI: quiet=<quiet> · harvested=<N> · launched=<N> · in-flight=<N>_` and (if any triaged) `_CI-triage: fixed=<N> · flagged-human=<N> · reran=<N>_` and `_Reconciled: <list>._`. If the GIT-SAFETY guard skipped any dirty worktree or a lock-contended git op this sweep, surface it: `_Git-safety: skipped <wt> (dirty/in-use) · <n> index.lock retries._`. (The mutex is held for the whole sweep — you acquired it at Step 0 and release it at Step 4.)
 
 **LEAD with the GREENS block, rendered VERBATIM from `greens`** (do NOT reclassify — the script already ran the mandatory 🟡 gate and the RED-regex-wins check). Group each tier's entries by `lane`:
 - 🟢 **`strict`** and 🟡 **`cosmetic_yellow`** (annotate each 🟡 with its `failing_checks`): `owner` → ✅ **Your lane (merge now)**; `team` → ⛔ **Team's lane** (ready, but theirs to merge); `secondary` → ◽ **Secondary product — your call** (feature→develop); `secondary_cohort` → 🔑 **Cohort unblockers** (stack roots gating a cohort). Annotate stack parents with the merge procedure (merge WITHOUT `--delete-branch` → retarget child → delete branch).
@@ -131,6 +150,8 @@ End with the summary line matching `decision`: `ACTIVE FIXES` / `CONSUMING CREDI
 ```
 
 ## Step 4 — Decision (from the script — NEVER recompute stall logic)
+
+**0·release the mutex — ALWAYS, on every exit path of a sweep you actually ran** (both PROGRESSING and AUTO-STOP; do this before/around the decision handling so it can't be skipped): `~/.claude/hooks/babysit-lock.sh release`. (It's a no-op if you don't own the lock; the 20-min TTL self-heals a missed release, but release explicitly.) If you SKIPPED the sweep at Step 0 because it was `LOCKED`, do NOT release — you never held it.
 
 Use `decision` verbatim:
 - **PROGRESSING** → leave the cron armed; the loop fires again next hour. This is the default while any PR is pending — do NOT stop just because a sweep pushed no fix (a bump-only sweep is the loop working). A credit-blocked/rate-limited queue is ALWAYS PROGRESSING (the script forces `streak=0`); NEVER auto-stop on credit exhaustion and NEVER report it as needing the owner's billing action.
