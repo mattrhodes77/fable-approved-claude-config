@@ -83,11 +83,14 @@ jq -c . /tmp/bulldozer-state.json 2>/dev/null || echo '{"target":10,"shipped":0,
 
 ## Step 1 — Build the dedup set + the candidate shortlist (once per wake)
 
-Dedup set of in-flight ticket refs (skip these — already being worked; `prlaunch-ok` markers are written by the ship flow, `~/code/` is your checkout root):
+Dedup set of in-flight ticket refs (skip these — already being worked; `prlaunch-ok` markers are written by the ship flow, `~/code/` is your checkout root). Three sources: ship-flow markers, local worktrees/branches (any ticket ref in a worktree path OR checked-out branch across every clone), and **open PRs org-wide** (catches a ticket someone PR'd with no surviving local worktree and no tracker state change):
 ```bash
-(ls ~/.claude/prlaunch-ok/ 2>/dev/null; for r in ~/code/*/; do git -C "$r" worktree list 2>/dev/null; done) \
+(ls ~/.claude/prlaunch-ok/ 2>/dev/null; \
+ for r in ~/code/*/; do git -C "$r" worktree list 2>/dev/null; done; \
+ gh search prs --owner <your-org> --author "@me" --state open --json title -q '.[].title' --limit 100 2>/dev/null) \
   | grep -oiE "dev-?[0-9]+" | tr 'A-Z' 'a-z' | sed 's/dev-*/dev-/' | sort -u
 ```
+The `gh search prs` scan (adapt `<your-org>`; PR titles must carry the ticket ref — the ship flow's convention) runs ONCE per wake (rate-limit friendly); if it errors/returns nothing, proceed on the other two sources — it's a belt-and-suspenders layer, not a gate.
 
 Query your tracker for backlog tickets created in the last `days` (for Linear: `list_issues` state:backlog, createdAt:-P<days>D, orderBy:createdAt, generous limit). The dump is large — **delegate the parse to a subagent**: have it EXCLUDE every identifier in `state.actioned` + the dedup set — **EXCEPT** entries whose `actioned` value starts with `failed:` (a single prior failure → retry-eligible; include these as lower-ranked retry candidates). `failedx2:` / shipped / `resolved:` entries stay excluded. Apply `<selection-criteria>`, and return a RANKED shortlist as a **strict JSON array**, top-ranked first, nothing else — each element `{"identifier":"DEV-NNNN","repo":"<repo>","one_line_fix":"<the concrete fix>","assignee":"unassigned|you","rank":<int, 1=best>}`. **Validate the returned array before using it:** `jq -e 'type=="array" and (length==0 or (.[0]|has("identifier") and has("repo") and has("one_line_fix") and has("rank")))'`. On validation failure, re-ask the parse-subagent ONCE for JSON-only; if it still doesn't parse, treat it as an empty shortlist for this wake. Keep that validated shortlist in hand for the drain loop.
 
@@ -96,7 +99,7 @@ Query your tracker for backlog tickets created in the last `days` (for Linear: `
 Loop over the shortlist, top-ranked first:
 
 1. **Stop conditions (check before each ticket):** `shipped >= target` → done (Step 3 auto-stop, target met). No more shortlist candidates → done (queue dry this wake). A per-wake safety cap of `2 × target` subagents spawned → done (anti-runaway; the heartbeat resumes next hour).
-2. **Skip** any candidate now in the dedup set, or in `state.actioned` UNLESS its value is a single `failed:` (retry-eligible — let it through for its one retry). (State may have advanced mid-wake.)
+2. **Skip** any candidate now in the dedup set, or in `state.actioned` UNLESS its value is a single `failed:` (retry-eligible — let it through for its one retry). State may have advanced mid-wake — so **re-run the LOCAL half of the dedup scan** (ship-flow markers + the `~/code/` worktree/branch loop; cheap, no API) right before each spawn, catching a ticket another terminal started mid-drain. The `gh` PR scan stays once-per-wake.
 3. **Spawn ONE fresh subagent** with the `<ticket-subagent-prompt>` below, parameterized for this ticket — it does the entire ticket in its own context and returns the validated JSON result object (`RESULT_SCHEMA` = the RETURN CONTRACT object in that prompt).
    - **PREFERRED — Workflow tool.** Spawn via the Workflow tool as `agent(prompt, {schema: RESULT_SCHEMA})` so JSON validation + retry happen at the tool layer. Gotchas: workflow `args` may arrive as a **string** → coerce/JSON-parse before use; `export const meta` MUST be the first statement in the workflow module. Check Workflow availability **once per wake** and note in the report which path you're on.
    - **FALLBACK — Agent tool** (`subagent_type: general-purpose`) if Workflow is unavailable this session. Require the worker's fenced JSON result object and validate it with `jq -e` on the required keys: `jq -e '.status and .ticket and (.status!="shipped" or (.evidence.verify_cmd and .evidence.verify_result)) and (.status!="resolved" or .evidence.still_outstands_proof)'`. On validation failure, do **ONE** re-ask via **SendMessage** ("return only the JSON object, no prose") and re-validate; if it still fails, record `failed:malformed` (stays retry-eligible under the existing `failed:` → one-retry escalation) and continue to the next ticket.
