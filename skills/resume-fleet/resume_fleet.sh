@@ -28,9 +28,13 @@ MODE="${MODE:-act}"
 LOG="${LOG:-$HOME/.claude/resume_fleet.log}"
 MAXTABS="${MAXTABS:-24}"
 
-# ACTIVE limit popup as it sits at the BOTTOM of a blocked session's screen. Menu-specific
-# so a scrolled-back "usage limit" line (a subagent error) above a live prompt does NOT match.
-CAP_REGEX='Stop and wait for limit to reset|Add funds to continue|Switch to Team plan|hit your monthly spend limit'
+# Evidence that a bottom-of-screen popup is a USAGE-LIMIT popup (form-agnostic: monthly
+# spend, per-model 5h e.g. "reached your Fable 5 limit", usage-limit-reached, credits).
+# Kept broad because it only counts when it sits DIRECTLY above the popup action line.
+CAP_REGEX='Stop and wait for limit to reset|Add funds to continue|Switch to Team plan|hit your .*limit|reached your .*limit|usage limit reached|Run /usage-credits'
+# Inline blocking notices safe to auto-continue (validated forms only — NOT the soft
+# "reached your <model> limit … or switch" notice, which the session flows past).
+INLINE_RX='hit your monthly spend limit|Claude usage limit reached'
 
 log(){ echo "[$(date '+%H:%M:%S')] $*" | tee -a "$LOG" ; }
 key(){ osascript -e "tell application \"System Events\" to tell process \"$EDITOR_PROC\" to key code $1" >/dev/null 2>&1; }
@@ -77,11 +81,11 @@ for i in $(seq 1 "$NTABS"); do
   # sits just above it; OR the inline notice is itself the last line (prompt held).
   nb="$(printf '%s' "$buf" | grep -v '^[[:space:]]*$')"
   last1="$(printf '%s' "$nb" | tail -n 1)"
-  last5="$(printf '%s' "$nb" | tail -n 5)"
+  last8="$(printf '%s' "$nb" | tail -n 8)"
   blocked=0
   if printf '%s' "$last1" | grep -qiE 'Enter to confirm.*Esc to cancel' \
-     && printf '%s' "$last5" | grep -qiE "$CAP_REGEX"; then blocked=1; fi
-  if printf '%s' "$last1" | grep -qiE 'hit your monthly spend limit|Claude usage limit reached'; then blocked=1; fi
+     && printf '%s' "$last8" | grep -qiE "$CAP_REGEX"; then blocked=1; fi
+  if printf '%s' "$last1" | grep -qiE "$INLINE_RX"; then blocked=1; fi
 
   if [ "$blocked" -eq 1 ]; then
     capped=$((capped+1))

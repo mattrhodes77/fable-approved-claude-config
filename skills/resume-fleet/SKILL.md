@@ -1,7 +1,7 @@
 ---
 name: resume-fleet
-version: 0.1
-description: Auto-resume a fleet of Claude Code CLI sessions that hit the 5-hour usage limit. Use when you have many Claude Code sessions open in VS Code / Cursor terminal tabs and want them to continue automatically when the limit resets (e.g. "restart my capped sessions in 5 hours", "resume all my Claude sessions after the limit resets", "my sessions hit the session limit, continue them at reset"). Schedules a detached job that, at reset, sends Esc + "continue" ONLY to tabs actually blocked on the limit popup — working/wrapped/idle tabs are left untouched.
+version: 0.2
+description: Auto-resume a fleet of Claude Code CLI sessions that hit the usage limit. Use when you have many Claude Code sessions open in VS Code / Cursor terminal tabs and want them to continue automatically when the limit resets (e.g. "restart my capped sessions", "resume all my Claude sessions after the limit resets", "run a daemon that keeps my fleet unstuck"). Two modes: a hands-off launchd DAEMON (recommended — watches the transcripts for fresh cap events and resumes within minutes of any reset, no timing guesswork), or an on-demand one-shot scheduler. Either way it sends Esc + "continue" ONLY to tabs actually blocked on the limit popup — working/wrapped/idle tabs are left untouched.
 ---
 
 # resume-fleet — auto-continue capped Claude Code sessions at reset
@@ -33,7 +33,11 @@ nothing else.
 ## Files (next to this SKILL.md)
 
 - `resume_fleet.sh` — one pass: detect blocked tabs, optionally send Esc+continue.
-- `resume_scheduler.sh` — wait until reset, then run `resume_fleet` in retry rounds.
+- `capped_edges.py` — cheap disk scan for FRESH usage-limit events (the daemon's gate),
+  classifying hard (blocking popup) vs soft (per-model "reached your … limit", non-blocking).
+- `resume_daemon.sh` — one daemon tick: edge-gate → throttled UI probe → retry window → notify.
+- `install_daemon.sh` — install/manage the launchd daemon (install/status/disable/enable/tick/uninstall).
+- `resume_scheduler.sh` — on-demand mode: wait until reset, then run `resume_fleet` in retry rounds.
 - `install_keybindings.sh` — idempotently add the `f17/f18/f19` bindings.
 
 ## Usage
@@ -44,6 +48,26 @@ nothing else.
 bash ~/.claude/skills/resume-fleet/install_keybindings.sh
 ```
 The editor reloads `keybindings.json` live; no restart needed.
+
+### RECOMMENDED — the hands-off launchd daemon (v0.2)
+No timing guesswork, no arming. It ticks every ~2 min but is **edge-triggered**: a cheap
+disk scan (`capped_edges.py`) for a FRESH usage-limit event. Only when a fresh cap appears
+(or during a post-block retry window) does it run the UI probe that actually resumes
+popup-blocked tabs. It steals focus **only around real cap events**, never at idle.
+```bash
+# install + load (Cursor: prefix EDITOR_APP="Cursor" EDITOR_PROC="Cursor")
+bash ~/.claude/skills/resume-fleet/install_daemon.sh install
+bash ~/.claude/skills/resume-fleet/install_daemon.sh status      # loaded? recent log
+bash ~/.claude/skills/resume-fleet/install_daemon.sh disable     # stop acting (flag file)
+bash ~/.claude/skills/resume-fleet/install_daemon.sh enable
+bash ~/.claude/skills/resume-fleet/install_daemon.sh uninstall   # unload + remove
+```
+- Logs: `~/.claude/resume-fleet-daemon.log`; state: `~/.claude/resume-fleet-daemon.json`.
+- Fires a macOS notification each time it actually continues a session.
+- **Hard vs soft:** a hard block (monthly-spend / usage-limit popup) always probes
+  immediately; a soft per-model notice ("reached your Fable 5 limit … or switch", which
+  the session flows past) gets a cooldown so it can't thrash the UI.
+- Pass `RF_SELF=<your session id>` to skip the installing session in the edge scan.
 
 ### 1. Dry-run detection (sends NOTHING — validate first)
 ```bash

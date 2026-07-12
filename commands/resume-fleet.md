@@ -1,7 +1,7 @@
 ---
 name: resume-fleet
-description: Auto-resume a fleet of Claude Code CLI sessions that hit the 5-hour usage limit. Schedules a detached job that, at reset, sends Esc + "continue" ONLY to VS Code / Cursor terminal tabs blocked on the limit popup; working/wrapped tabs are untouched. Use for "resume my capped sessions at reset", "continue all my Claude sessions in ~5h".
-argument-hint: "[reset clock time e.g. 01:50, or 'detect' for a dry run, or 'cancel']"
+description: Auto-resume a fleet of Claude Code CLI sessions that hit the usage limit. A hands-off launchd daemon (recommended) resumes them within minutes of any reset; or an on-demand scheduler arms for a specific reset time. Sends Esc + "continue" ONLY to VS Code / Cursor terminal tabs blocked on the limit popup; working/wrapped tabs are untouched. Use for "install the resume daemon", "resume my capped sessions at reset".
+argument-hint: "[daemon | daemon-off | status | detect | <reset clock time e.g. 01:50> | cancel]"
 allowed-tools:
   - Bash
   - Read
@@ -14,12 +14,21 @@ allowed-tools:
 ---
 
 Invoke the `resume-fleet` skill and follow its SKILL.md. Scripts live in
-`~/.claude/skills/resume-fleet/`.
+`~/.claude/skills/resume-fleet/`. Prefer the hands-off daemon; the timed scheduler is the
+on-demand alternative.
 
 Behavior by `$ARGUMENTS`:
 
-- **`cancel` / `stop`** → `pkill -f resume_scheduler.sh`, confirm nothing is armed
-  (`pgrep -fl resume_scheduler.sh`), report, exit.
+- **`daemon` / `install`** (RECOMMENDED) → install the always-on launchd daemon:
+  `bash ~/.claude/skills/resume-fleet/install_keybindings.sh` then
+  `bash ~/.claude/skills/resume-fleet/install_daemon.sh install`. Report status + how it
+  behaves (edge-triggered, notifies on resume, disable/uninstall). For Cursor thread the
+  `EDITOR_*` envs. Pass `RF_SELF=<current session id>` to skip this session in edge scans.
+- **`daemon-off` / `disable`** → `install_daemon.sh disable` (soft) or `uninstall` (full);
+  confirm which the user wants if ambiguous.
+- **`status`** → `install_daemon.sh status` + tail the daemon log.
+- **`cancel` / `stop`** → `pkill -f resume_scheduler.sh` (on-demand job), confirm nothing is
+  armed (`pgrep -fl resume_scheduler.sh`), report, exit.
 - **`detect`** → one read-only pass:
   `MODE=detect bash ~/.claude/skills/resume-fleet/resume_fleet.sh`, then show the
   BLOCKED-vs-skipped tally from `~/.claude/resume_fleet.log`. Send nothing.
