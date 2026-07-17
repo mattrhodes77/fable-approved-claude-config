@@ -164,7 +164,7 @@ Two paired hooks keep the issue tracker honest about what's actually being worke
 
 ## Cross-cutting: work taxonomy (Linear conventions)
 
-The vocabulary `PRlaunch`, `wrapup`, `bulldozer`, and `assign` all assume when filing and routing follow-up work. Canonical — those skills reference this section instead of restating it.
+The vocabulary `PRlaunch`, `wrapup`, `bulldozer`, and `assign` all assume for filing and routing follow-up work. Canonical — those skills reference this section instead of restating it.
 
 - **PROJECT** = a whole board / program-scale grouping (e.g. one product line).
 - **EPIC** = one orchestratable chunk of work — roughly a session's worth, ~5 related tickets/PRs shipping a feature or feature-chunk. An epic stays open until it's genuinely done, **including its ops tail** (deploy verification, flag flips, doc updates, any follow-ups it spawned) — shipping the PRs is not the same as the epic being finished. Re-chunk an oversized epic into smaller session-sized epics chained by blocked-by rather than grinding through all of it in one pass.
