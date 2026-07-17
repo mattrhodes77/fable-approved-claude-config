@@ -22,6 +22,7 @@ The most recent overhaul is itself a story about models: with Claude Fable 5 acc
 
 ```
 skills/execute/                  # 0. ORCHESTRATE — one command, whole lifecycle: read→validate→scope→plan→build→test→ship
+skills/orchestrate/              #    …or point it at a PROJECT and let it pick the next group itself
 skills/brainstorming/            # 1. BRAINSTORM — design before code           (obra/superpowers, MIT)
 skills/writing-plans/            #    …then write the implementation plan        (obra/superpowers, MIT)
 skills/executing-plans/          #    …then execute it with review checkpoints   (obra/superpowers, MIT)
@@ -64,6 +65,10 @@ skills/…                         # + the supporting superpowers set: using-sup
 ## 0. Drive it end to end — /execute
 
 [`skills/execute/SKILL.md`](skills/execute/SKILL.md) is the single front door that runs the whole lifecycle below as one disciplined pass: **read → validate against prod → scope → plan → build → test → `/PRlaunch`**. Two things make it more than a macro. First, a **validate-against-prod gate** before any code is written: the ticket's premise is a claim to verify, not trust — it checks whether the capability already exists and whether the described state is real, and **halts** if production contradicts the ticket (building the wrong thing is the most expensive bug there is). Second, an **ask-only-on-a-true-fork contract**: it runs autonomously through to the PR when the path is clear, and interrupts only for a genuine decision — one with materially different outcomes that can't be derived from the ticket, the code, or a sensible default — so it neither over-asks on trivia nor silently guesses on the choices that actually matter. It builds in an isolated worktree and hands off to PRlaunch for the quality gates; it never re-runs them itself. Everything below is what `/execute` orchestrates — and each piece still stands alone.
+
+## 0.25 Pick the group yourself — orchestrate
+
+[`skills/orchestrate/SKILL.md`](skills/orchestrate/SKILL.md) is what runs when you don't have a work-list yet — you only know the *project*. It's `/execute`'s batch pipeline with two deltas: the orchestrator itself picks the ~3–8 unit group (collision-checked against in-flight branches/PRs so it never crosses another session's lane), and every build unconditionally runs in a fresh cheap-model subagent per unit, briefed per the `briefs` contract — never inline, regardless of how small the fix looks. It validates every unit's premise before building any of them (expect real kills — a contradicted premise here is the win, not a failure), then validates every worker's "shipped" claim before accepting it, because a green report you didn't check is a hallucination vector.
 
 ## 0.5 Brief the workers — briefs (and build repo knowledge — skillify)
 
