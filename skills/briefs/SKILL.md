@@ -73,6 +73,59 @@ honest attempts (the premise is wrong), or the allowlisted files don't contain
 found instead. Do not widen the path allowlist to go hunting.
 ```
 
+## The classifier-fleet pipeline
+
+Some orchestrators don't fan out to *build* — they fan out to *classify/validate at scale*, reconciling a large set of claims against ground truth. This shape recurs enough to name: **deterministic pre-pass → read-only classifier/validator fleet → single-writer applies → verify counts → memory_write.**
+
+1. **Deterministic pre-pass.** Establish ground truth once, cheaply, with plain commands — not agents. Pull the decisive facts up front (e.g. each repo's `git log`, which commits are ancestors of a live box's HEAD) and inject the result as a routing hint into each worker's brief. Agents shouldn't spend budget re-deriving what a `git log`/`grep` already answered.
+2. **Read-only classifier/validator fleet.** One six-section brief per item, fanned out in parallel. Each worker classifies its item and returns a structured verdict — it proposes, it never writes. Read-only is what makes wide fan-out safe: a bad classification is a wrong string, not a wrong write.
+3. **Single-writer applies.** One writer turns verdicts into writes — either the orchestrator itself, or one narrow, mechanical apply-brief per item. Route any write that can fork a record (one verdict becoming two tickets, a split) through the orchestrator by hand, never an agent: independent workers racing on the same write path is exactly how a split mis-applies to the wrong record.
+4. **Verify counts.** After applying, re-pull the target collection and assert the count matches the expected kept-set. Don't trust a worker's self-reported "what I did" field — assert the actual post-state, because a worker can silently do more than it was told and misreport it.
+5. **memory_write.** Close the sweep by persisting what was found/decided so the next run doesn't re-derive it from scratch (skip this step if you don't run a persistent-memory tool).
+
+**`flushdeployed` is the existing end-to-end exemplar of stages 1–4**: its per-repo `git log`, pre-computed live-vs-pending recon IS the deterministic pre-pass; `validate-workflow.js`'s one-agent-per-ticket, read-only (`apply=false`) verdicts ARE the classifier fleet; the orchestrator hand-doing every `PARTIAL` split plus the narrow `apply-done-workflow.js` for the mechanical Done/note writes ARE the single-writer stage; and its "re-pull the Deployed column, assert `count == expected-kept-set`" step IS verify-counts.
+
+### Worked example — a read-only classifier/validator brief
+
+```
+CONTEXT: Repo is acme-services (fictionalized values below). Trust ONLY the
+prod ground truth given here — do not re-derive it: origin/main HEAD is
+a1b2c3d; the live EC2 box is at e4f5a6b (`git merge-base --is-ancestor` a
+commit against e4f5a6b tells you if it's actually live). You are one of N
+parallel read-only workers; a single orchestrator applies all verdicts after
+every worker returns — you never write the tracker yourself.
+
+TASK: Return a structured verdict on whether ticket EX-3217 ("Fix
+double-charge on renewal") is genuinely live in prod, not just merged.
+
+CONSTRAINTS:
+- Read-only: propose an action, do not call any tracker write tool.
+- Don't trust a merge commit alone — confirm the actual fixed code is present
+  in origin/main (`git show origin/main:<path>`), not just a commit subject
+  match; catches reverts and no-op merges.
+- Gotcha (verbatim): a failed merge-search alone is NOT enough to call
+  WRONG_NOT_DEPLOYED — when unsure between WRONG and UNCERTAIN, pick
+  UNCERTAIN.
+
+RETURN CONTRACT: reply with exactly this JSON:
+{
+  "id": "EX-3217",
+  "verdict": "DEPLOYED_LIVE" | "MERGED_PENDING_DEPLOY" | "PARTIAL" | "WRONG_NOT_DEPLOYED" | "UNCERTAIN",
+  "evidence": "<commit hash + file:line proving present/absent>",
+  "proposed_action": "move_to_done" | "note_keep_deployed" | "split_then_done" | "note_move_to_todo" | "note_only_manual",
+  "confidence": "high" | "medium" | "low"
+}
+
+VERIFICATION REQUIREMENT: before returning a verdict other than UNCERTAIN, you
+MUST have actually run the merge-search and the ancestor check this session
+and quote their output in "evidence" — a verdict with no command behind it is
+not a verdict.
+
+STOP CONDITIONS: if you can't find the merge AND can't positively confirm the
+fix is absent, return UNCERTAIN with confidence "low" and evidence naming what
+you checked — do not guess WRONG_NOT_DEPLOYED off a failed search alone.
+```
+
 ## Adopters
 
-These orchestrator skills each spawn workers and must reference this template when they build a worker prompt: **bulldozer** (per-ticket workers), **deep-review** (finder/refuter agents), **babysit-prs** (CodeRabbit-fix workers), **assign** (discovery agents), **skillify** (skill-author workers). Their edits to point at this contract land separately — this file is the canonical source they cite, not a change to those skills.
+These orchestrator skills each spawn workers and must reference this template when they build a worker prompt: **bulldozer** (per-ticket workers), **deep-review** (finder/refuter agents), **babysit-prs** (CodeRabbit-fix workers), **assign** (discovery agents), **skillify** (skill-author workers), **flushdeployed** (deployed-ticket validator/apply fleet — the end-to-end exemplar of the classifier-fleet pipeline above). Their edits to point at this contract land separately — this file is the canonical source they cite, not a change to those skills.

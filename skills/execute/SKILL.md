@@ -18,6 +18,9 @@ The argument names the **work-list** — enumerate it before anything else:
 - One `DEV-NNNN` / Linear URL → one unit. Fetch the issue; its body is the task.
 - **Several tickets** (pasted list — space/comma/newline separated, or pasted bodies) → one unit PER ticket.
 - **An epic / parent ticket** → `get_issue` the parent, then its sub-issues: every open child is a unit (blocked-by order decides sequence, not membership).
+  - **Size epics to a one-session chunk (~5 tickets).** That's roughly what one `/execute` pass can validate, plan, and ship with the discipline this skill requires. An epic with materially more open children than that doesn't fit in one pass.
+  - **Over that size, propose a re-chunk before building** — split the remaining children into a blocked-by chain of smaller batches (same "(stacked on #NNNN)"-style sequencing as dependent units) and confirm the chunking with the owner rather than silently grinding through all of them in one session.
+  - **The epic isn't closed until its ops tail is done.** Every child ticket shipping a PR is not the same as the epic being finished — deploy, verify-in-prod, and any wrap-up/monitoring the epic implies are part of "done." Don't report or treat the epic as closed until those ops tails are confirmed, not just merged.
 - Free-form ("execute: add X to Y") → that text is the task; if it contains several independent shippable units, decompose it — each unit gets its own ticket filed in phase 4.
 - No argument → ask what to execute.
 

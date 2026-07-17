@@ -93,7 +93,12 @@ coderabbit review --base main --plain
 3. **Every finding gets an explicit disposition — nothing is silently dropped:**
    - IN-SCOPE actionable → fix in the working tree, commit.
    - IN-SCOPE nit → fix if trivial, else file a follow-up ticket.
-   - OUT-OF-SCOPE but legitimate → **file a tracker ticket** (batch related findings into one ticket; assign the owner; link the source PR + the finding's `file:line`). This is the step that's easy to skip — don't. "Out of scope" means *track it elsewhere*, not *discard it*.
+   - OUT-OF-SCOPE but legitimate → **file a tracker ticket** (batch related findings into one ticket; link the source PR + the finding's `file:line`) — routed into one of the three filing buckets, never parentless, ownership per bucket:
+     1. Routine nit/ops follow-up on the feature being shipped → same feature epic as the ticket being shipped (epic stays open until done); assign the owner.
+     2. CR-deferred small self-contained 1-off (LLM-doable) → that project's standing "Bulldozer 1-offs" epic, **unassigned** (find by title; create it there if missing).
+     3. Big idea surfaced mid-session → a new parked epic of its own; assign the owner.
+
+     Canonical bucket definitions: see the README's "Work taxonomy (Linear conventions)" section. This is the step that's easy to skip — don't. "Out of scope" means *track it elsewhere*, not *discard it*.
    - Junk / not-a-real-issue → waive with a one-line reason (recorded in the wrapup report).
    Maintain a running disposition list (finding → fixed | ticket <id> | waived: reason). Phase 6 verifies it.
 4. Commit fixes.
@@ -244,7 +249,7 @@ For each unit:
 Same flow as `/wrapup`:
 
 1. **Tracker** — update tickets to "In Review", then **verify the PR attachment actually landed**: `mcp__linear__get_issue <id>` and confirm the PR URL is in `attachments`/links. If it's missing (the `Closes`/branch auto-link didn't fire), attach it explicitly (`mcp__linear__save_issue` with `links: [{url, title}]`) — don't assume the magic word stuck (tickets are systematically under-linked). Comment on session progress.
-2. **Disposition gate** — walk the running disposition list from phases 1+2+3. Every finding must be `fixed`, `ticket <id>`, or `waived: <reason>`. **If any OUT-OF-SCOPE-but-legit finding has no ticket yet, file it now** (batch related ones; assign the owner; link source PR + `file:line`). A finding with no disposition is a bug in the wrapup — resolve it before reporting.
+2. **Disposition gate** — walk the running disposition list from phases 1+2+3. Every finding must be `fixed`, `ticket <id>`, or `waived: <reason>`. **If any OUT-OF-SCOPE-but-legit finding has no ticket yet, file it now** (batch related ones; link source PR + `file:line`). Route it through the same three filing buckets as the CR CLI gate above (same feature epic / project's "Bulldozer 1-offs" epic / new parked epic; ownership per bucket) — never parentless. A finding with no disposition is a bug in the wrapup — resolve it before reporting.
 
    **Durable per-unit record (guarded no-op if the helper is absent).** For EACH shipped unit, append one `prlaunch`/`unit` event to `~/.claude/automation-ledger.jsonl` (a durable quality record a weekly scorecard can aggregate). Pull `cr_cli` (clean or its skip-reason) and `outcome_eval` (`na` or scenario count) straight from this unit's gate ledger; supply the deep-review CRITICAL+HIGH count, `regate` done, and whether `PRLAUNCH_SKIP` was used:
    ```bash
