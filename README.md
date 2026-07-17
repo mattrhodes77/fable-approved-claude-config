@@ -23,6 +23,7 @@ The most recent overhaul is itself a story about models: with Claude Fable 5 acc
 ```
 skills/execute/                  # 0. ORCHESTRATE — one command, whole lifecycle: read→validate→scope→plan→build→test→ship
 skills/orchestrate/              #    …or point it at a PROJECT and let it pick the next group itself
+skills/epicbuilder/              #    …or, if that project's backlog is a loose pile, structure it into epics first
 skills/brainstorming/            # 1. BRAINSTORM — design before code           (obra/superpowers, MIT)
 skills/writing-plans/            #    …then write the implementation plan        (obra/superpowers, MIT)
 skills/executing-plans/          #    …then execute it with review checkpoints   (obra/superpowers, MIT)
@@ -69,6 +70,10 @@ skills/…                         # + the supporting superpowers set: using-sup
 ## 0.25 Pick the group yourself — orchestrate
 
 [`skills/orchestrate/SKILL.md`](skills/orchestrate/SKILL.md) is what runs when you don't have a work-list yet — you only know the *project*. It's `/execute`'s batch pipeline with two deltas: the orchestrator itself picks the ~3–8 unit group (collision-checked against in-flight branches/PRs so it never crosses another session's lane), and every build unconditionally runs in a fresh cheap-model subagent per unit, briefed per the `briefs` contract — never inline, regardless of how small the fix looks. It validates every unit's premise before building any of them (expect real kills — a contradicted premise here is the win, not a failure), then validates every worker's "shipped" claim before accepting it, because a green report you didn't check is a hallucination vector.
+
+## 0.3 Structure the backlog first — epicbuilder
+
+[`skills/epicbuilder/SKILL.md`](skills/epicbuilder/SKILL.md) (`/epicbuilder <fuzzy project(s)>`) is `/orchestrate`'s front half: a project can't be orchestrated, assigned, or bulldozed off a flat Todo/Backlog pile — those consumers all eat epics. It inventories a project's loose tickets, fans classification out to a read-only cheap-model fleet (existing-epic-first, so a concern that's already an epic gets tickets parented in rather than duplicated), proposes ~3–8-ticket session epics chained by real dependency order, and parks true self-contained 1-offs under the project's standing **Bulldozer 1-offs** epic so `/bulldozer` has a queue. Cross-board strays get flagged, never moved — that's a separate hygiene pass's job. Single writer applies the announced map, then a children-count verification pass before it's trusted.
 
 ## 0.5 Brief the workers — briefs (and build repo knowledge — skillify)
 
