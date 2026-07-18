@@ -21,10 +21,40 @@ launchd (macOS) fires `headless-skill.sh`, which runs `claude -p "<prompt>"`
 4. Disable: `launchctl bootout gui/$(id -u)/<label>`
 
 ## The collision rule
-The lock guards against overlapping **headless** fires only. Do not run a
-skill's interactive `/loop` while its headless plist is loaded — two drivers
-sweeping the same PRs/tickets means duplicate review bumps and worktrees.
-One driver per skill.
+The per-skill lock guards against overlapping **headless** fires only — it does
+**not** know about an interactive `/loop` running the same skill. Two drivers
+sweeping the same PRs/tickets means duplicate review bumps and worktrees. The
+baseline rule is **one driver per skill**: don't run a skill's interactive
+`/loop` while its headless plist is loaded.
+
+### Automating it: the babysit heartbeat gate
+Rather than police that by hand, the babysit example plist routes through
+`babysit-hourly-gate.sh` instead of calling `headless-skill.sh` directly, so the
+headless backup **stands down whenever a live terminal is already babysitting**
+and only fires when there's none — or when that terminal is stuck:
+
+- `hooks/babysit-heartbeat.py` (a `Stop` + `UserPromptSubmit` hook) bumps
+  `~/.claude/babysit-heartbeat` every turn a session is *genuinely* running
+  `/babysit-prs` (it matches the slash-command invocation record in the
+  transcript, not prose — so a session merely discussing babysit never trips it).
+- `babysit-hourly-gate.sh` reads that heartbeat's age at each fire:
+  fresh (`< 70 min`) → a terminal is actively babysitting → **SKIP**; stale
+  (terminal wedged on a prompt / hung) or missing (no terminal) → **run the
+  backup**. It runs the backup with `HEADLESS_BABYSIT=1` so the headless
+  session's own `/babysit-prs` never writes the heartbeat.
+
+To use it for another skill, generalize the gate (the heartbeat detection keys
+off the skill's command name). To wire the hook, add it to both events in
+`settings.json`:
+
+```json
+"Stop":            [{ "hooks": [{ "type": "command", "command": "~/.claude/hooks/babysit-heartbeat.py", "timeout": 5 }] }],
+"UserPromptSubmit":[{ "hooks": [{ "type": "command", "command": "~/.claude/hooks/babysit-heartbeat.py", "timeout": 5 }] }]
+```
+
+The 70-minute window comfortably clears a full hourly `/loop` sweep, so a healthy
+interactive loop always suppresses the backup; only a genuinely stuck or closed
+terminal goes quiet long enough to let it through.
 
 ## Caveats
 - launchd only fires while the machine is awake; missed calendar fires coalesce
