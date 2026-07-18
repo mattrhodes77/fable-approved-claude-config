@@ -7,7 +7,7 @@
     <key>ProgramArguments</key>
     <array>
         <string>/bin/zsh</string>
-        <string>/Users/you/.claude/launchd/headless-skill.sh</string>
+        <string>/Users/you/.claude/launchd/babysit-hourly-gate.sh</string>
         <string>babysit</string>
         <string>3000</string>
         <string>/babysit-prs no-loop</string>
