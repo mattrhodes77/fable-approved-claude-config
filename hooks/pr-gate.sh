@@ -43,7 +43,11 @@ deny() {
 
 # Repo dir: explicit `cd <dir>` / `git -C <dir>` in the command wins, else hook cwd
 dir=$(jq -r '.cwd // ""' <<<"$input")
-explicit=$(grep -oE '(cd|git -C) [^ ;&|]+' <<<"$cmd" | head -1 | awk '{print $NF}')
+# Take the LAST one BEFORE the trigger, since that is the directory the PR is
+# actually created from: `cd /tmp && cd repo && gh pr create` runs in `repo`,
+# and a trailing `&& cd /elsewhere` runs only after the PR already exists.
+before_trigger="${cmd%%gh pr create*}"
+explicit=$(grep -oE '(cd|git -C) [^ ;&|]+' <<<"$before_trigger" | tail -1 | awk '{print $NF}')
 [[ -n "$explicit" && -d "${explicit/#\~/$HOME}" ]] && dir="${explicit/#\~/$HOME}"
 
 toplevel=$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null) \

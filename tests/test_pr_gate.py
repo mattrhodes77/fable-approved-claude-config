@@ -138,6 +138,36 @@ class PrGateTest(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIsNone(decision(out))
 
+    # -- repo dir resolution ---------------------------------------------
+    def test_repo_dir_takes_the_last_cd_before_the_trigger(self):
+        # `cd /elsewhere && cd <repo> && gh pr create` lands in <repo>, so the
+        # gate must key the ledger off <repo>. Taking the FIRST cd consults the
+        # decoy's (nonexistent) ledger and denies a properly gated PR.
+        decoy = os.path.join(self.sbx.dir, "decoy")
+        make_git_repo(decoy, "me/eng-9999-decoy", self.sbx.env())
+        self.sbx.write_ledger(self.repo_name, self.branch, self._valid_gates())
+        cmd = "cd " + decoy + " && cd " + self.repo + " && " + GHPR + " --fill"
+        rc, out, _ = run_hook(
+            self.sbx, "pr-gate.sh",
+            {"tool_input": {"command": cmd}, "cwd": self.sbx.dir},
+        )
+        self.assertEqual(rc, 0)
+        self.assertIsNone(decision(out), "should resolve the target repo, not the decoy")
+
+    def test_repo_dir_ignores_a_cd_after_the_trigger(self):
+        # A trailing `&& cd /elsewhere` runs only after the PR is created; it
+        # must not decide which ledger is checked.
+        decoy = os.path.join(self.sbx.dir, "decoy2")
+        make_git_repo(decoy, "me/eng-8888-decoy", self.sbx.env())
+        self.sbx.write_ledger(self.repo_name, self.branch, self._valid_gates())
+        cmd = "cd " + self.repo + " && " + GHPR + " --fill && cd " + decoy
+        rc, out, _ = run_hook(
+            self.sbx, "pr-gate.sh",
+            {"tool_input": {"command": cmd}, "cwd": self.sbx.dir},
+        )
+        self.assertEqual(rc, 0)
+        self.assertIsNone(decision(out))
+
     def test_quoted_mention_does_not_trigger(self):
         # The trigger token appears only inside a single-quoted string, so the
         # gate must strip it and never fire (even though there's no marker).
