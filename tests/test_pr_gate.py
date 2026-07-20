@@ -154,6 +154,34 @@ class PrGateTest(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIsNone(decision(out), "should resolve the target repo, not the decoy")
 
+    def test_repo_dir_prefers_the_last_cd_over_a_later_git_dash_c(self):
+        # `git -C <dir>` runs one command elsewhere; it does NOT move the
+        # shell. The PR is still created from the last cd, so a `git -C` on
+        # another repo must not hijack the resolution.
+        decoy = os.path.join(self.sbx.dir, "decoy3")
+        make_git_repo(decoy, "me/eng-7777-decoy", self.sbx.env())
+        self.sbx.write_ledger(self.repo_name, self.branch, self._valid_gates())
+        cmd = ("cd " + self.repo + " && git -C " + decoy + " fetch && "
+               + GHPR + " --fill")
+        rc, out, _ = run_hook(
+            self.sbx, "pr-gate.sh",
+            {"tool_input": {"command": cmd}, "cwd": self.sbx.dir},
+        )
+        self.assertEqual(rc, 0)
+        self.assertIsNone(decision(out), "cd wins over a later git -C")
+
+    def test_repo_dir_falls_back_to_git_dash_c_when_there_is_no_cd(self):
+        # With no cd at all, `git -C <dir>` is the only signal for which repo
+        # the PR belongs to — keep honouring it.
+        self.sbx.write_ledger(self.repo_name, self.branch, self._valid_gates())
+        cmd = "git -C " + self.repo + " push && " + GHPR + " --fill"
+        rc, out, _ = run_hook(
+            self.sbx, "pr-gate.sh",
+            {"tool_input": {"command": cmd}, "cwd": self.sbx.dir},
+        )
+        self.assertEqual(rc, 0)
+        self.assertIsNone(decision(out))
+
     def test_repo_dir_ignores_a_cd_after_the_trigger(self):
         # A trailing `&& cd /elsewhere` runs only after the PR is created; it
         # must not decide which ledger is checked.
