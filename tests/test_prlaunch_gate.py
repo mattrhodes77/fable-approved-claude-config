@@ -148,6 +148,9 @@ class PrlaunchGateTest(unittest.TestCase):
         os.remove(scen)
         rc, out, err = self.gate("record", "outcome_eval", "--na", "no user-facing surface")
         self.assertEqual(rc, 0, out + err)
+        entry = self._ledger()["gates"]["outcome_eval"]
+        self.assertNotIn("scenarios_sha256", entry,
+                         "--na must not carry stale scenario evidence")
 
     # -- check failure modes ---------------------------------------------
     def test_check_missing_gate_names_it(self):
