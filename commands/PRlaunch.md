@@ -35,9 +35,18 @@ Before anything else, list what we're shipping:
 - Make sure changes are committed to a feature branch (not sitting uncommitted, not on `main`). If uncommitted, commit them now — HEREDOC message, match repo style via `git log --oneline -5`, plus the attribution trailer (see below).
 - Report the list back to the owner and confirm before proceeding: "I'm about to ship these N units through PRlaunch — confirm?"
 
-**Attribution trailer — default ON, per-repo opt-out.** By default, commits get `Co-Authored-By: Claude <noreply@anthropic.com>` and the PR body ends with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`. Some repos forbid AI-attribution trailers, and a `commit-msg` hook may strip or reject them. Omit **both** when `PRLAUNCH_NO_TRAILER=1` is set, or when `git log --oneline -20` shows the repo doesn't use them — attribution is a per-repo policy, not a property of this command.
+**Attribution trailer — default ON, per-repo opt-out.** By default, commits get `Co-Authored-By: Claude <noreply@anthropic.com>` and the PR body ends with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`. Some repos forbid AI-attribution trailers, and a `commit-msg` hook may strip or reject them. **`PRLAUNCH_NO_TRAILER=1` is the single opt-out**, and it drops *both* sites — the commit trailer here and the PR-body line in Phase 5. To decide whether a repo wants it set, read commit **bodies**, not subjects:
 
-**If a hook rewrote or rejected your commit, HEAD moved.** Re-resolve HEAD (`git rev-parse HEAD`) after committing and before recording any gate — a `commit-msg` hook that edits the message produces a different sha, which silently stales every gate recorded against the old one and blocks Phase 5 with a confusing STALE report.
+```bash
+git log -20 --pretty=%B | grep -ci 'co-authored-by: claude'   # --oneline shows subjects only, never a trailer
+```
+
+Attribution is a per-repo policy, not a property of this command.
+
+**A `commit-msg` hook desyncs the ledger in two different ways — they need different responses:**
+
+- **Rewritten** (hook edits the message, commit succeeds): the commit you shipped has a *different* sha than the one you were about to record. Re-resolve `git rev-parse HEAD` after committing and before recording any gate, or every gate stamps a sha you aren't shipping and Phase 5 blocks with a confusing STALE report.
+- **Rejected** (hook exits non-zero): there is **no commit** — HEAD is unchanged and your work is still uncommitted. Stop and fix the message, then commit successfully; recording a gate now stamps the *parent* commit and green-lights code that was never committed.
 
 **Ticket state at start-of-work is automatic if you run the tracker hooks.** The `linear-startwork.sh` PostToolUse hook flips a ticket to In Progress + assigns you the moment its ticket-token branch is created (and alerts instead of stealing if someone else holds it). So by the time you're here, each unit's ticket *should* already be In Progress + assigned. Per unit: confirm it is; if a unit's branch never carried a ticket token (so the hook never fired), the `pr-gate` link check (Phase 5) will block its PR anyway — locate/file the ticket now and either rename the branch or put `Closes <TICKET-ID>` in the body.
 

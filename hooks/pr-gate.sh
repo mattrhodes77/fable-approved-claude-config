@@ -48,6 +48,13 @@ dir=$(jq -r '.cwd // ""' <<<"$input")
 # trailing `&& cd /elsewhere` runs only after the PR already exists. `git -C`
 # is only a fallback: it runs one command elsewhere without moving the shell,
 # so it must never override an actual cd.
+#
+# This is a text heuristic, not a shell parser: it cannot see control flow, so
+# `cd /a || cd /b && …` and a subshell-scoped `(cd /b && true) && …` can still
+# pick the wrong directory. That is tolerable because it fails toward DENYING
+# (the wrong repo/branch almost never has a ledger at this HEAD), and the deny
+# message names the repo it resolved, so the fix is obvious. Replacing the
+# heuristic with an explicit repo-dir signal is tracked in DEV-4989.
 before_trigger="${cmd%%gh pr create*}"
 explicit=$(grep -oE '(^|[ ;&|(])cd [^ ;&|]+' <<<"$before_trigger" | tail -1 | awk '{print $NF}')
 [[ -n "$explicit" ]] \
