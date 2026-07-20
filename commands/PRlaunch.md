@@ -32,7 +32,7 @@ Before anything else, list what we're shipping:
 - Walk the conversation for repos + branches touched.
 - Per repo: `git status --short`, `git log @{u}..HEAD --oneline` (or `git log origin/main..HEAD` if no upstream), `git branch --show-current`.
 - Group changes into shippable units. Usually = one branch = one PR. If a branch spans multiple tickets, ask the owner whether to split.
-- Make sure changes are committed to a feature branch (not sitting uncommitted, not on `main`). If uncommitted, commit them now — HEREDOC message, match repo style via `git log --oneline -5`, plus the attribution trailer (see below).
+- Make sure changes are committed to a feature branch (not sitting uncommitted, not on `main`). If uncommitted, commit them now — HEREDOC message, match repo style via `git log --oneline -5`, and include the attribution trailer unless `PRLAUNCH_NO_TRAILER=1` is set (see below).
 - Report the list back to the owner and confirm before proceeding: "I'm about to ship these N units through PRlaunch — confirm?"
 
 **Attribution trailer — default ON, per-repo opt-out.** By default, commits get `Co-Authored-By: Claude <noreply@anthropic.com>` and the PR body ends with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`. Some repos forbid AI-attribution trailers, and a `commit-msg` hook may strip or reject them. **`PRLAUNCH_NO_TRAILER=1` is the single opt-out**, and it drops *both* sites — the commit trailer here and the PR-body line in Phase 5. To decide whether a repo wants it set, read commit **bodies**, not subjects:
@@ -40,6 +40,8 @@ Before anything else, list what we're shipping:
 ```bash
 git log -20 --pretty=%B | grep -ci 'co-authored-by: claude'   # --oneline shows subjects only, never a trailer
 ```
+
+A non-zero count means the repo already accepts the trailer — leave the default on. **A zero count is not proof of an opt-out** (the repo may just be new, or no agent has committed to it yet): check the repo's contributing policy and its `commit-msg` hook (`.git/hooks/commit-msg`, `.husky/`) before deciding, and ask the owner when it stays inconclusive rather than guessing.
 
 Attribution is a per-repo policy, not a property of this command.
 

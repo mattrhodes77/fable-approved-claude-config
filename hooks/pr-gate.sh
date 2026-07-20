@@ -54,7 +54,7 @@ dir=$(jq -r '.cwd // ""' <<<"$input")
 # pick the wrong directory. That is tolerable because it fails toward DENYING
 # (the wrong repo/branch almost never has a ledger at this HEAD), and the deny
 # message names the repo it resolved, so the fix is obvious. Replacing the
-# heuristic with an explicit repo-dir signal is tracked in DEV-4989.
+# heuristic with an explicit repo-dir signal is tracked separately.
 before_trigger="${cmd%%gh pr create*}"
 explicit=$(grep -oE '(^|[ ;&|(])cd [^ ;&|]+' <<<"$before_trigger" | tail -1 | awk '{print $NF}')
 [[ -n "$explicit" ]] \
