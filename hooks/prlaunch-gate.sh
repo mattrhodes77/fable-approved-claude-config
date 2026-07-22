@@ -17,8 +17,12 @@
 #       Stores {path, sha256 of the file, ts}. Precondition for outcome_eval.
 #   record deep_review|cr_cli|outcome_eval|tests [--skipped R] [--na R] [--cmd C]
 #       Stamp {sha: current HEAD, ts} for that gate. Rules:
-#         * outcome_eval is REFUSED unless scenarios were registered first,
-#           UNLESS --na is given (no user-facing surface needs no scenarios).
+#         * outcome_eval is REFUSED unless scenarios were registered first AND
+#           the registered file still hashes to the sha256 stored at
+#           registration -- editing or deleting the scenarios after the fact is
+#           drift and is refused. The verified hash is stamped onto the entry as
+#           scenarios_sha256. UNLESS --na is given (no user-facing surface needs
+#           no scenarios).
 #         * --skipped is only valid for cr_cli and requires a reason.
 #         * --na is only valid for outcome_eval and requires a reason.
 #         * --cmd records the verify command (used for tests).
@@ -130,7 +134,7 @@ case "$subcmd" in
       || die "unknown gate '$gate' (scenarios|deep_review|cr_cli|outcome_eval|tests)"
 
     # ---- parse the gate flags ---------------------------------------------
-    skipped="" ; na="" ; cmd=""
+    skipped="" ; na="" ; cmd="" ; scen_sha=""
     have_skipped=0 ; have_na=0
     shift 2
     while [[ $# -gt 0 ]]; do
@@ -157,10 +161,23 @@ case "$subcmd" in
     [[ $have_na -eq 0 || -n "$na" ]] \
       || die "--na requires a reason"
 
+    # Pre-registering scenarios only means anything if the file is still the one
+    # that was registered: the point of the gate is that scenarios were written
+    # BEFORE the eval ran. Re-hash here and refuse on drift, otherwise the
+    # recorded sha256 is decorative and the eval can be graded against scenarios
+    # rewritten to match whatever shipped.
     if [[ "$gate" == "outcome_eval" && $have_na -eq 0 ]]; then
-      has_scen=$(ledger_read | jq -r 'if (.scenarios.path // "") != "" then "yes" else "no" end')
-      [[ "$has_scen" == "yes" ]] \
+      scen_path=$(ledger_read | jq -r '.scenarios.path // ""')
+      [[ -n "$scen_path" ]] \
         || die "outcome_eval refused -- no scenarios registered. Run 'prlaunch-gate.sh record scenarios <path>' BEFORE the eval, or 'record outcome_eval --na \"<reason>\"' if there is no user-facing surface."
+      [[ -f "$scen_path" ]] \
+        || die "outcome_eval refused -- the registered scenarios file no longer exists: $scen_path. Re-register the scenarios you actually evaluated ('record scenarios <path>'), then re-run the eval."
+      want_sha=$(ledger_read | jq -r '.scenarios.sha256 // ""')
+      [[ -n "$want_sha" ]] \
+        || die "outcome_eval refused -- the scenarios entry carries no sha256 (ledger written by an older prlaunch-gate). Re-register with 'record scenarios $scen_path'."
+      scen_sha=$(file_sha256 "$scen_path")
+      [[ "$scen_sha" == "$want_sha" ]] \
+        || die "outcome_eval refused -- scenarios DRIFTED since they were registered ($scen_path: registered ${want_sha:0:12}, now ${scen_sha:0:12}). Scenarios must be written BEFORE the eval runs. Either re-run the eval against the scenarios as registered, or 'record scenarios $scen_path' again and re-run the eval on the new ones."
     fi
 
     ts=$(now)
@@ -168,7 +185,7 @@ case "$subcmd" in
       --arg repo "$repo" --arg branch "$branch" --arg gate "$gate" \
       --arg sha "$head" --arg ts "$ts" \
       --arg skipped "$skipped" --arg na "$na" --arg cmd "$cmd" \
-      --arg hs "$have_skipped" --arg hn "$have_na" \
+      --arg hs "$have_skipped" --arg hn "$have_na" --arg scen "$scen_sha" \
       '
       .repo = $repo
       | .branch = $branch
@@ -178,6 +195,7 @@ case "$subcmd" in
           + (if $hs == "1" then {skipped: $skipped} else {} end)
           + (if $hn == "1" then {na: $na} else {} end)
           + (if $cmd != "" then {cmd: $cmd} else {} end)
+          + (if $scen != "" then {scenarios_sha256: $scen} else {} end)
         )
       ') || die "jq failed building the '$gate' entry"
     atomic_write "$updated"

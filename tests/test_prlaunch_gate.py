@@ -106,6 +106,52 @@ class PrlaunchGateTest(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn("only valid for outcome_eval", out + err)
 
+    # -- scenarios drift --------------------------------------------------
+    # The registered sha256 is the whole point of pre-registering scenarios:
+    # they must be written BEFORE the eval runs. Recording outcome_eval has to
+    # re-hash and refuse, or the stored hash is decorative.
+    def test_outcome_eval_refused_when_scenarios_drifted(self):
+        scen = self._scenarios_file()
+        self.assertEqual(self.gate("record", "scenarios", scen)[0], 0)
+        with open(scen, "w") as fh:
+            fh.write("scenario 1: rewritten AFTER the eval to match what shipped\n")
+        rc, out, err = self.gate("record", "outcome_eval")
+        self.assertEqual(rc, 1)
+        self.assertIn("DRIFTED", out + err)
+        self.assertNotIn("outcome_eval", self._ledger().get("gates", {}))
+
+    def test_outcome_eval_refused_when_scenarios_file_missing(self):
+        scen = self._scenarios_file()
+        self.assertEqual(self.gate("record", "scenarios", scen)[0], 0)
+        os.remove(scen)
+        rc, out, err = self.gate("record", "outcome_eval")
+        self.assertEqual(rc, 1)
+        self.assertIn("no longer exists", out + err)
+        self.assertNotIn("outcome_eval", self._ledger().get("gates", {}))
+
+    def test_outcome_eval_records_the_verified_scenarios_sha(self):
+        scen = self._scenarios_file()
+        self.assertEqual(self.gate("record", "scenarios", scen)[0], 0)
+        self.assertEqual(self.gate("record", "outcome_eval")[0], 0)
+        led = self._ledger()
+        self.assertEqual(
+            led["gates"]["outcome_eval"]["scenarios_sha256"],
+            led["scenarios"]["sha256"],
+            "the verified hash belongs on the gate entry as durable evidence",
+        )
+
+    def test_outcome_eval_na_ignores_scenario_drift(self):
+        # --na means "no user-facing surface", so there are no scenarios to
+        # drift from; the check must not fire on that path.
+        scen = self._scenarios_file()
+        self.assertEqual(self.gate("record", "scenarios", scen)[0], 0)
+        os.remove(scen)
+        rc, out, err = self.gate("record", "outcome_eval", "--na", "no user-facing surface")
+        self.assertEqual(rc, 0, out + err)
+        entry = self._ledger()["gates"]["outcome_eval"]
+        self.assertNotIn("scenarios_sha256", entry,
+                         "--na must not carry stale scenario evidence")
+
     # -- check failure modes ---------------------------------------------
     def test_check_missing_gate_names_it(self):
         self.assertEqual(self.gate("record", "deep_review")[0], 0)
