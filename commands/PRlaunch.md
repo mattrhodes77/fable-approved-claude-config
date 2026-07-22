@@ -32,8 +32,23 @@ Before anything else, list what we're shipping:
 - Walk the conversation for repos + branches touched.
 - Per repo: `git status --short`, `git log @{u}..HEAD --oneline` (or `git log origin/main..HEAD` if no upstream), `git branch --show-current`.
 - Group changes into shippable units. Usually = one branch = one PR. If a branch spans multiple tickets, ask the owner whether to split.
-- Make sure changes are committed to a feature branch (not sitting uncommitted, not on `main`). If uncommitted, commit them now — HEREDOC message, match repo style via `git log --oneline -5`, Co-Authored-By: Claude.
+- Make sure changes are committed to a feature branch (not sitting uncommitted, not on `main`). If uncommitted, commit them now — HEREDOC message, match repo style via `git log --oneline -5`, and include the attribution trailer unless `PRLAUNCH_NO_TRAILER=1` is set (see below).
 - Report the list back to the owner and confirm before proceeding: "I'm about to ship these N units through PRlaunch — confirm?"
+
+**Attribution trailer — default ON, per-repo opt-out.** By default, commits get `Co-Authored-By: Claude <noreply@anthropic.com>` and the PR body ends with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`. Some repos forbid AI-attribution trailers, and a `commit-msg` hook may strip or reject them. **`PRLAUNCH_NO_TRAILER=1` is the single opt-out**, and it drops *both* sites — the commit trailer here and the PR-body line in Phase 5. To decide whether a repo wants it set, read commit **bodies**, not subjects:
+
+```bash
+git log -20 --pretty=%B | grep -ci 'co-authored-by: claude'   # --oneline shows subjects only, never a trailer
+```
+
+A non-zero count means the repo already accepts the trailer — leave the default on. **A zero count is not proof of an opt-out** (the repo may just be new, or no agent has committed to it yet): check the repo's contributing policy and its `commit-msg` hook (`.git/hooks/commit-msg`, `.husky/`) before deciding, and ask the owner when it stays inconclusive rather than guessing.
+
+Attribution is a per-repo policy, not a property of this command.
+
+**A `commit-msg` hook desyncs the ledger in two different ways — they need different responses:**
+
+- **Rewritten** (hook edits the message, commit succeeds): the commit you shipped has a *different* sha than the one you were about to record. Re-resolve `git rev-parse HEAD` after committing and before recording any gate, or every gate stamps a sha you aren't shipping and Phase 5 blocks with a confusing STALE report.
+- **Rejected** (hook exits non-zero): there is **no commit** — HEAD is unchanged and your work is still uncommitted. Stop and fix the message, then commit successfully; recording a gate now stamps the *parent* commit and green-lights code that was never committed.
 
 **Ticket state at start-of-work is automatic if you run the tracker hooks.** The `linear-startwork.sh` PostToolUse hook flips a ticket to In Progress + assigns you the moment its ticket-token branch is created (and alerts instead of stealing if someone else holds it). So by the time you're here, each unit's ticket *should* already be In Progress + assigned. Per unit: confirm it is; if a unit's branch never carried a ticket token (so the hook never fired), the `pr-gate` link check (Phase 5) will block its PR anyway — locate/file the ticket now and either rename the branch or put `Closes <TICKET-ID>` in the body.
 
@@ -231,6 +246,8 @@ For each unit:
    EOF
    )"
    ```
+
+   Drop the `🤖 Generated with …` line when the repo opts out of the attribution trailer (`PRLAUNCH_NO_TRAILER=1` — see Phase 0). Everything above it stays.
 
 4. Cloud CodeRabbit will auto-run on the ready PR — that's a confirmation pass, not the gate. The gate was already met locally.
 5. Report the PR URL back to the owner.

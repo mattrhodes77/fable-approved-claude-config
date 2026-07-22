@@ -43,7 +43,22 @@ deny() {
 
 # Repo dir: explicit `cd <dir>` / `git -C <dir>` in the command wins, else hook cwd
 dir=$(jq -r '.cwd // ""' <<<"$input")
-explicit=$(grep -oE '(cd|git -C) [^ ;&|]+' <<<"$cmd" | head -1 | awk '{print $NF}')
+# Resolve it from the LAST `cd` BEFORE the trigger — that is the directory the
+# PR is actually created from. `cd /tmp && cd repo && …` runs in `repo`, and a
+# trailing `&& cd /elsewhere` runs only after the PR already exists. `git -C`
+# is only a fallback: it runs one command elsewhere without moving the shell,
+# so it must never override an actual cd.
+#
+# This is a text heuristic, not a shell parser: it cannot see control flow, so
+# `cd /a || cd /b && …` and a subshell-scoped `(cd /b && true) && …` can still
+# pick the wrong directory. That is tolerable because it fails toward DENYING
+# (the wrong repo/branch almost never has a ledger at this HEAD), and the deny
+# message names the repo it resolved, so the fix is obvious. Replacing the
+# heuristic with an explicit repo-dir signal is tracked separately.
+before_trigger="${cmd%%gh pr create*}"
+explicit=$(grep -oE '(^|[ ;&|(])cd [^ ;&|]+' <<<"$before_trigger" | tail -1 | awk '{print $NF}')
+[[ -n "$explicit" ]] \
+  || explicit=$(grep -oE 'git -C [^ ;&|]+' <<<"$before_trigger" | tail -1 | awk '{print $NF}')
 [[ -n "$explicit" && -d "${explicit/#\~/$HOME}" ]] && dir="${explicit/#\~/$HOME}"
 
 toplevel=$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null) \
