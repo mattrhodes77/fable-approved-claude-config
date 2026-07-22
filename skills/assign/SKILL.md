@@ -26,7 +26,7 @@ Turns "find more tickets for <people>" into verified, assigned Linear tickets. R
 
 3. **BACKLOG-FIRST — claim existing in-lane tickets.** This is the primary source of work:
    `python3 ~/.claude/skills/assign/assign.py backlog alice bob`
-   It ranks the team's UNASSIGNED open backlog (Backlog/Todo, no assignee) by each person's **lane fit** — primary-project centrality (their #1 project = full weight) + specific product labels + theme keywords; ubiquitous cross-cutting labels (`platform`/`Bug Fix`/…) are ignored so they don't inflate. For each named person:
+   It ranks the team's UNASSIGNED open backlog (Backlog/Todo, no assignee) by each person's **lane fit** — primary-project centrality (their #1 project = full weight) + specific product labels + theme keywords; ubiquitous cross-cutting labels (`platform`/`Bug Fix`/…) are ignored so they don't inflate. **Exclude children of any project's "Bulldozer 1-offs" epic** from this ranking — those are earmarked for the bulldozer heartbeat, and claiming one into a person's workstream would race/duplicate bulldozer's drain. For each named person:
    - Review the ranked in-lane candidates and pick the ones that fit their current focus (respect lane fit even when names were given — a ticket in Bob's lane → Bob).
    - Assign each existing ticket via **`assign.py claim ENG-NNNN --assignee alice`** (→ sets assignee, moves Backlog→Todo). `--dry-run` first; `--force` only to reassign an already-owned ticket; `--state keep` to leave its state.
    - A person whose ranked list is healthy is **done here — do NOT run discovery for them.** The `backlog` command prints "fall through to DISCOVERY for this person" when a lane is genuinely empty.
@@ -65,6 +65,8 @@ Turns "find more tickets for <people>" into verified, assigned Linear tickets. R
 ## bulldozer-triage — the LLM-vs-human discriminator
 
 `/bulldozer` (`~/.claude/commands/bulldozer.md`) is a heartbeat that drains EASY tickets: one fresh subagent per ticket confirms it still stands, fixes it in a worktree, runs PRlaunch, opens a PR. It only picks tickets that are **unassigned or yours, recent, unblocked, well-specified, and small-scope**. Mirror that bar here so the right tickets flow to it.
+
+**Filing:** when filing a bulldozer-eligible ticket, set its parent to the project's standing "Bulldozer 1-offs" epic (find-or-create: title exactly `Bulldozer 1-offs`, state Epics, never closes — see the README's "Work taxonomy (Linear conventions)" section) instead of filing it parentless. This is the filing bucket for CR-deferred 1-offs, and it's what bulldozer's epic-sourced intake (`commands/bulldozer.md` Step 1) reads.
 
 **Bulldozer-eligible (file `--bulldozer`, unassigned)** — ALL must hold:
 - **Small + mechanical**: single-function / one-file / a guard (`x?.y`) / wiring an *existing* handler or hook / mirroring a sibling / deriving from existing config. The discovery already names the exact fix.

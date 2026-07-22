@@ -172,6 +172,22 @@ Two paired hooks keep the issue tracker honest about what's actually being worke
 - **`reconcile-ticket.sh`** (CLI, called by `wrapup` and `babysit-prs`) — advances a ticket to **Deployed** only when *every* linked PR is merged, fixing the multi-PR race where the tracker's per-PR automation leaves a cross-repo ticket stuck In Progress after the first sibling merges. Advance-only, never sets Done, fail-open; needs `LINEAR_DEPLOYED_STATE_ID` on top of the shared config.
 - **`linear-startwork.sh`** (PostToolUse) — the other half: once that branch lands, take the ticket — flip a not-started state to In Progress and assign you if it's unassigned (never reassigns someone else's ticket, never regresses In Review/Deployed/Done). It detects creation via `checkout -b/-B`, `switch -c/-C`, bare `git branch`, **and `git worktree add … -b`** — the last is what the worktree-per-ticket pattern actually uses, so without it the ticket silently never moves (we hit exactly this).
 
+## Cross-cutting: work taxonomy (Linear conventions)
+
+The vocabulary `PRlaunch`, `wrapup`, `bulldozer`, and `assign` all assume for filing and routing follow-up work. Canonical — those skills reference this section instead of restating it.
+
+- **PROJECT** = a whole board / program-scale grouping (e.g. one product line).
+- **EPIC** = one orchestratable chunk of work — roughly a session's worth, ~5 related tickets/PRs shipping a feature or feature-chunk. An epic stays open until it's genuinely done, **including its ops tail** (deploy verification, flag flips, doc updates, any follow-ups it spawned) — shipping the PRs is not the same as the epic being finished. Re-chunk an oversized epic into smaller session-sized epics chained by blocked-by rather than grinding through all of it in one pass.
+- **Ticket** ≈ one PR.
+
+**Follow-up filing buckets** — every follow-up ticket filed in any session picks exactly one bucket; nothing gets filed parentless:
+
+1. **CR-deferred 1-off** — a small, self-contained, LLM-doable finding from a repo-wide review with no cross-ticket ordering → parent it under that project's standing **"Bulldozer 1-offs"** epic (one per board/project, title exactly `Bulldozer 1-offs`, state Epics, never closes — create it if the board doesn't have one yet). File it **unassigned**: this is `/bulldozer`'s queue, not a human's.
+2. **Nit/ops follow-up on the feature being shipped** (a flag flip, a data migration, "turn this on once X is live") → the **same epic** as the feature it belongs to; that epic stays open until the follow-up is done.
+3. **A bigger idea surfaced mid-session** → its **own new parked epic**, even if it starts with a single ticket.
+
+`PRlaunch`, `wrapup`, `bulldozer`, and `assign` all route follow-ups through these three buckets — see each skill for where in its flow the routing happens.
+
 ## Cross-cutting: how we do memory
 
 Not shippable in this repo (it's wired to our internal platform), but worth describing because it changes what an agent can do across sessions. We replaced Claude Code's native file-based memory (which truncates: first ~200 lines / 25 KB of `MEMORY.md`) with **retrieval-backed memory served over MCP**:
