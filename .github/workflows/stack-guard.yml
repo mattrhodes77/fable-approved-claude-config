@@ -1,0 +1,134 @@
+name: Stack guard
+
+# VENDORED copy of MindFortressInc/.github/.github/workflows/stack-guard.yml@main.
+# That repo is private, so a cross-account reusable-workflow caller cannot resolve
+# it from a personal repo — the logic is inlined here instead. If the org copy
+# changes, re-vendor (this bit us 2026-07-22: fable-approved-claude-config #20 was
+# orphaned by exactly the base-branch-delete failure this workflow heals).
+#
+# Two safeguards:
+#   1. retarget-stack-on-merge — when a PR merges, repoint any open PR based on
+#      its head branch to the merged PR's base.
+#   2. reopen-orphaned-on-delete — if a branch deletion closed dependent PRs,
+#      recreate them against the default branch.
+# No PR code is checked out — API calls only.
+
+on:
+  pull_request_target:
+    types: [closed]
+  delete:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  retarget-stack-on-merge:
+    if: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.merged == true }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const head = context.payload.pull_request.head.ref;   // the just-merged branch
+            const base = context.payload.pull_request.base.ref;   // where it merged into
+            const num = context.payload.pull_request.number;
+            // Git Flow guard: a release PR's head is a long-lived branch
+            // (e.g. develop -> main), NOT a disposable feature branch. Without
+            // this, merging develop -> main makes the guard treat every
+            // develop-based feature PR as a stranded child and yank it onto
+            // `main`, silently breaking Git Flow on every release (observed on
+            // writing-partner-backend, 2026-05-29). Never stack-retarget when
+            // the merged head is a permanent branch. Trunk-based repos are
+            // unaffected: they never merge a long-lived head into another branch.
+            const LONG_LIVED = new Set(
+              ["develop", "main", "master", context.payload.repository.default_branch].filter(Boolean)
+            );
+            if (LONG_LIVED.has(head)) {
+              core.info(`'${head}' is a long-lived branch — skipping stack retarget.`);
+              return;
+            }
+            const deps = await github.paginate(github.rest.pulls.list, {
+              owner, repo, state: "open", base: head, per_page: 100,
+            });
+            if (deps.length === 0) {
+              core.info(`No open PRs based on '${head}'. Nothing to retarget.`);
+              return;
+            }
+            for (const pr of deps) {
+              try {
+                await github.rest.pulls.update({ owner, repo, pull_number: pr.number, base });
+                await github.rest.issues.createComment({
+                  owner, repo, issue_number: pr.number,
+                  body: `🔁 **stack-guard**: auto-retargeted base \`${head}\` → \`${base}\` ` +
+                        `because #${num} merged. Rebase your branch onto \`${base}\` to drop the merged commits.`,
+                });
+                core.info(`Retargeted #${pr.number}: ${head} -> ${base}`);
+              } catch (e) {
+                core.warning(`Failed to retarget #${pr.number}: ${e.message}`);
+              }
+            }
+
+  reopen-orphaned-on-delete:
+    if: ${{ github.event_name == 'delete' && github.event.ref_type == 'branch' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const deleted = context.payload.ref;                       // deleted branch name
+            const def = context.payload.repository.default_branch;
+            // Symmetry with retarget-stack-on-merge: never act on a long-lived
+            // branch. They are never deleted in normal flow, so a delete event
+            // for one is either impossible or a catastrophe — auto-reopening
+            // stale PRs against it is never the right move. (Was: default only.)
+            const LONG_LIVED = new Set(["develop", "main", "master", def].filter(Boolean));
+            if (LONG_LIVED.has(deleted)) return;
+            const closed = await github.paginate(github.rest.pulls.list, {
+              owner, repo, state: "closed", base: deleted, per_page: 100,
+            });
+            const recentCutoff = Date.now() - 15 * 60 * 1000;          // closed ~with this delete
+            const unrecovered = [];
+            for (const pr of closed) {
+              if (pr.merged_at) continue;                              // genuinely merged — leave it
+              if (!pr.closed_at || new Date(pr.closed_at).getTime() < recentCutoff) continue;
+              try {
+                // True reopen is IMPOSSIBLE here (proven on reeve-services
+                // #506/#499, 2026-06-11): GitHub 422s a base change on a
+                // CLOSED PR, and refuses to reopen a PR whose base ref is
+                // deleted. The only recovery is recreating the PR from the
+                // surviving head branch.
+                const fresh = await github.rest.pulls.create({
+                  owner, repo,
+                  head: pr.head.ref, base: def,
+                  title: pr.title,
+                  draft: pr.draft,
+                  body: `♻️ **stack-guard**: recreated from #${pr.number}, which was auto-closed ` +
+                        `when its base branch \`${deleted}\` was deleted. Rebase onto \`${def}\` ` +
+                        `to drop the merged commits. Original review context: #${pr.number}.\n\n---\n\n` +
+                        (pr.body ?? ""),
+                });
+                await github.rest.issues.createComment({
+                  owner, repo, issue_number: pr.number,
+                  body: `♻️ **stack-guard**: this PR was auto-closed by the deletion of its base ` +
+                        `\`${deleted}\`. Recreated as #${fresh.data.number} against \`${def}\`.`,
+                });
+                core.info(`Recreated orphaned #${pr.number} as #${fresh.data.number} -> ${def}`);
+              } catch (e) {
+                // A 422 "pull request already exists" means a human (or an
+                // earlier run) already recovered it — not a failure.
+                if (/already exists/i.test(e.message)) {
+                  core.info(`#${pr.number}: open PR for ${pr.head.ref} -> ${def} already exists.`);
+                  continue;
+                }
+                unrecovered.push(`#${pr.number} (${e.message})`);
+                core.warning(`Failed to recover #${pr.number}: ${e.message}`);
+              }
+            }
+            // Never report vacuous success — silent-green is how #506/#499
+            // stayed lost for 9 hours.
+            if (unrecovered.length) {
+              core.setFailed(`Orphaned PRs NOT recovered: ${unrecovered.join(", ")}`);
+            }
