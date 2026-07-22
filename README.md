@@ -18,6 +18,8 @@ Built over ~6 months of daily production use running [Reeve](https://meetreeve.c
 
 The most recent overhaul is itself a story about models: with Claude Fable 5 access on the Max plan sunsetting, we pointed Fable at this config for one final pass — using the strongest model to harden the whole pipeline so a smaller one could drive it at the same quality bar. That wave produced the evidence-required review process (v6.9), the per-gate ledger a hook enforces mechanically, deterministic tested classifiers replacing prompt-time judgment, the six-section worker-brief contract, and `skillify` — repo skill libraries that hand a weaker model senior-engineer operating knowledge. The thesis of the whole repo: **put the judgment in the process, not the model.**
 
+A follow-on wave closed what that pass left half-wired. A canonical **work taxonomy** (see `Cross-cutting: work taxonomy` below) gives `PRlaunch`, `wrapup`, `bulldozer`, and `assign` one shared PROJECT/EPIC/ticket vocabulary and a single **3-bucket follow-up-filing contract**, so every follow-up lands in the shipping feature's own epic, a standing "Bulldozer 1-offs" epic, or a fresh parked epic — never parentless, and never restated per-skill. `bulldozer` reads that standing epic as a second intake source (exempt from its normal recency filter); `assign`'s backlog-claim ranking excludes its children so a human claim can't race the heartbeat's drain. `execute` learned to size an epic to a one-session chunk (~5 tickets) and propose a re-chunk instead of grinding an oversized one in a single pass. `briefs` named the **classifier-fleet pipeline** it had already been running informally — deterministic pre-pass → read-only classifier fleet → single-writer apply → verify counts → memory-write — citing `flushdeployed` as its worked, end-to-end exemplar. And a new skill, `linear-gardener`, applies that same pipeline shape as a *standing*, config-driven board-hygiene pass: inventory the board, promote oversized epics to projects, re-chunk the rest into session epics, sweep stray tickets with the classifier fleet, and apply the fixes through one verified writer — every workspace specific (team, project, label cohort, thresholds) lives in a gitignored config file, never in the skill itself.
+
 ## What's in the box
 
 ```
@@ -39,6 +41,7 @@ commands/bulldozer.md            #    hourly self-arming heartbeat that DRAINS e
 commands/cleanup.md              #    resolve cleanup debt — deletes the careful hook deferred during loops
 skills/flushdeployed/            # 6. AUDIT — is each "Deployed" ticket REALLY live? validate against main + the deploy box
 skills/assign/                   # 7. STAFF — roster-driven ticket discovery + assignment for a team (local SQLite + roster)
+skills/linear-gardener/          # standing board-hygiene pass — inventory/promote/re-chunk/sweep/apply, config-driven
 hooks/pr-gate.sh                 # enforcement: blocks `gh pr create` unless every gate is recorded at the current HEAD
 hooks/prlaunch-gate.sh           # the per-gate evidence ledger CLI the phases stamp and pr-gate verifies
 hooks/check-careful.sh           # guardrail: plain-English prompt on destructive bash; silent on routine cleanup (loop-mode aware)
