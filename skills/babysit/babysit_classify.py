@@ -299,9 +299,24 @@ def classify_pr(gh_bin, pr, now):
             return e
         last_push = parse_iso(((cd.get("commit") or {}).get("committer") or {}).get("date"))
 
+    # Only thread-ROOT comments are findings. CR's in-thread REPLIES are
+    # conversation — "Skipped: comment is from another GitHub bot" acks, or
+    # withdrawal replies — and CR posts them whenever anyone answers in a
+    # thread, so counting them re-flags an already-settled PR on every sweep
+    # until the head happens to move. A root CR explicitly withdrew (reply
+    # carrying <review_comment_withdrawn>) is dead regardless of age.
+    withdrawn_roots = {
+        c.get("in_reply_to_id")
+        for c in cr_inline
+        if c.get("in_reply_to_id") and "review_comment_withdrawn" in (c.get("body") or "")
+    }
     actionable = []
     if cr_inline and last_push:
         for c in cr_inline:
+            if c.get("in_reply_to_id"):
+                continue  # reply, not a finding
+            if c.get("id") in withdrawn_roots:
+                continue  # CR withdrew this finding in-thread
             t = parse_iso(cts(c))
             if t and t > last_push:
                 actionable.append(c)
